@@ -161,6 +161,27 @@ table.sched.edit td{padding:4px} table.sched.edit input,table.sched.edit select{
 .dlink.hl{border:3px solid #e0115f;background:rgba(224,17,95,.15);animation:dpulse 1.2s ease-in-out 3}
 @keyframes dpulse{50%{box-shadow:0 0 0 8px rgba(224,17,95,.25)}}
 .dwgcol{position:absolute;top:0;bottom:0;background:rgba(47,111,181,.10);border-left:2px solid rgba(47,111,181,.5);border-right:2px solid rgba(47,111,181,.5);pointer-events:none}
+
+/* computer layout */
+main.wide{max-width:1560px} main.full{max-width:none}
+.wo,.wideonly,.dwgside{display:none}
+@media (min-width:1100px){
+  main.wide,main.full{padding-bottom:16px}
+  .split{display:grid;grid-template-columns:minmax(360px,430px) minmax(0,1fr);gap:16px;align-items:start}
+  .split.b{grid-template-columns:minmax(480px,44%) minmax(0,1fr)}
+  .pane{max-height:calc(100vh - 84px);overflow:auto;display:grid;gap:14px;align-content:start;padding:2px 6px 30px 2px}
+  .pl .stats,.pl .hint{display:none}
+  .pl .sel{outline:3px solid var(--accent);outline-offset:-2px}
+  tr.sel td{background:rgba(242,169,0,.14)}
+  .wo{display:table-cell} .pl .wo{display:none} .wideonly{display:block}
+  .dwgmain{display:grid;grid-template-columns:230px minmax(0,1fr);gap:10px;align-items:start}
+  .dwgside{display:grid;gap:2px;max-height:calc(100vh - 212px);overflow:auto;align-content:start}
+  .dwgside button{font:inherit;font-size:.86rem;text-align:left;background:none;border:0;border-left:3px solid transparent;border-radius:0 6px 6px 0;padding:6px 8px;color:var(--ink);cursor:pointer}
+  .dwgside button:hover{background:var(--surface)} .dwgside button.on{background:var(--surface);border-left-color:var(--accent);font-weight:600}
+  .dwgwrap{height:calc(100vh - 212px);max-height:none;cursor:grab} .dwgwrap.drag{cursor:grabbing;user-select:none}
+  #dwgsheet{display:none}
+}
+.dwgstage.zooming .dlink,.dwgstage.zooming .dwgcol{display:none}
 </style>
 </head>
 <body>
@@ -737,21 +758,42 @@ function render(){
   if(S.profile.calDue && S.profile.calDue < today()) top.push(`<div class="banner err">Your instrument calibration was due ${esc(fmtDate(S.profile.calDue))}. Results can still be saved but will show this on the sheet.</div>`);
   let body='';
   if(!S.db && !S.error) return;
+  const hasA=S.db&&!S.error&&S.job&&S.loaded.a&&A(S.asset);
+  const split=WIDE()&&hasA&&(S.view==='asset'||S.view==='form');
+  // Never rebuild a form that is being filled in (another phone saving a test used to wipe it)
+  if(S.view==='form'&&F&&$('#tform')&&hasA&&F.a.tag===S.asset&&F.sec.key===S.section&&!!$('#paneL')===split){ const pl=$('#paneL'); if(pl){ const st=pl.scrollTop; pl.innerHTML=leftHtml(); pl.scrollTop=st; markSel(); } netBanner(); return; }
+  let cls='';
   if(!S.db || S.error) body='';
   else if(!S.job) body=`<div class="card"><h2>No jobs yet</h2><p class="hint">${S.canEdit?'Create a job from the job menu, then import its asset list.':'Nothing has been set up yet.'}</p></div>`;
   else if(!S.loaded.a) body=`<div class="card"><h2>Loading assets…</h2></div>`;
+  else if(split){ const right=S.view==='form'?viewForm(A(S.asset),S.section):viewAsset(A(S.asset)); const left=leftHtml();
+    cls='wide'; body=`<div class="split${S.paneBoard?' b':''}"><div class="pane pl" id="paneL">${left}</div><div class="pane pr" id="paneR">${right}</div></div>`; }
   else if(S.view==='asset' && A(S.asset)) body=viewAsset(A(S.asset));
   else if(S.view==='form' && A(S.asset)) body=viewForm(A(S.asset),S.section);
-  else if(S.view==='boardEdit' && E) body=viewBoardEdit();
-  else if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) body=viewDwg();
+  else if(S.view==='boardEdit' && E){ body=viewBoardEdit(); cls='wide'; }
+  else if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]){ body=viewDwg(); cls='full'; }
   else if(S.tab==='drawings') body=tabBar()+viewDrawings();
-  else if(S.tab==='boards' && S.view==='board' && S.boards[S.board]) body=tabBar()+viewBoard(S.boards[S.board]);
+  else if(S.tab==='boards' && S.view==='board' && S.boards[S.board]){ body=tabBar()+viewBoard(S.boards[S.board]); cls='wide'; }
   else if(S.tab==='boards') body=tabBar()+viewBoards();
   else body=tabBar()+viewHome();
-  m.innerHTML=top.join('')+body;
+  const pl0=$('#paneL'); const keepScroll=pl0&&split?pl0.scrollTop:null;
+  m.className=cls; m.innerHTML=top.join('')+body;
+  if(keepScroll!=null&&$('#paneL')) $('#paneL').scrollTop=keepScroll;
+  if(split){ markSel(); if(keepScroll==null){ const sel=$('#paneL .sel'); if(sel) sel.scrollIntoView({block:'center'}); } }
   if(S.view==='form') wireForm();
   if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) drawDwg();
 }
+
+const WIDE=()=>window.innerWidth>=1100;
+/* Left pane on a computer: the board schedule the asset was opened from, otherwise the asset list */
+function leftHtml(){
+  const a=A(S.asset); const bn=a&&a.kind==='circuit'?a.board:(S.backBoard&&S.boards[S.backBoard]?S.backBoard:null);
+  S.paneBoard=bn&&S.boards[bn]?bn:null;
+  return S.paneBoard?viewBoard(S.boards[bn]):viewHome();
+}
+function markSel(){ const pl=$('#paneL'); if(!pl) return; pl.querySelectorAll('.sel').forEach(x=>x.classList.remove('sel'));
+  pl.querySelectorAll('[data-act="open"],[data-act="cct"]').forEach(x=>{ if(x.dataset.v===S.asset) x.classList.add('sel'); }); }
+let wideWas=null; window.addEventListener('resize',()=>{ const w=WIDE(); if(wideWas!==null&&w!==wideWas&&S.db) render(); wideWas=w; }); wideWas=window.innerWidth>=1100;
 
 function filteredAssets(){
   const q=S.q.trim().toLowerCase();
@@ -966,12 +1008,12 @@ function onClick(e){
   const act=b.dataset.act, v=b.dataset.v;
   if(dwgClick(act,b)) return;
   if(act==='open'||act==='board') closeModal();
-  if(act==='open'){S.backBoard=(S.tab==='boards'&&S.view==='board')?S.board:null; S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
+  if(act==='open'){S.backBoard=(S.tab==='boards'&&S.view==='board')?S.board:(b.closest('#paneL')&&S.paneBoard)||null; S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
   else if(act==='home'){S.view='home';S.tab='assets';S.backBoard=null;render();}
   else if(act==='tab'){S.tab=v;S.view=v==='boards'?'boards':v==='drawings'?'drawings':'home';render();window.scrollTo(0,0);}
   else if(act==='board'){S.tab='boards';S.board=v;S.view='board';render();window.scrollTo(0,0);}
   else if(act==='boards'){S.tab='boards';S.view='boards';render();}
-  else if(act==='cct'){S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
+  else if(act==='cct'){S.asset=v;S.view='asset';render();if(!WIDE())window.scrollTo(0,0);}
   else if(act==='editBoard'){openBoardEdit(v);}
   else if(act==='newBoard'){openBoardEdit(null);}
   else if(act==='pdfBoard'){boardPdf(S.boards[v]);}
@@ -982,7 +1024,7 @@ function onClick(e){
   else if(act==='beSave'){saveBoard(b);}
   else if(act==='beRemove'){removeBoard(b);}
   else if(act==='back'){S.view='asset';render();window.scrollTo(0,0);}
-  else if(act==='sec'){S.section=v;S.view='form';render();window.scrollTo(0,0);}
+  else if(act==='sec'){S.section=v;S.view='form';F=null;render();window.scrollTo(0,0);}
   else if(act==='group'){S.group=v;render();}
   else if(act==='status'){S.status=v;render();}
   else if(act==='seg'){ const f=b.dataset.f; F.vals[f]= F.vals[f]===v?'':v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===F.vals[f])); {const zi=document.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);} updateResult(); }
@@ -1397,13 +1439,14 @@ function viewBoard(b){
     <div style="font-size:1.1rem;margin-top:4px">${esc(b.desc||'')}</div>
     <div class="kv">${kv('Fed from',b.fed)}${kv('Supply',b.supply)}${kv('Location',b.location)}${kv('Circuits',(b.circuits||[]).length)}</div>
     ${b.notes&&b.notes.length?`<ul class="flags">${b.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}</div>
-  <div class="card" style="padding:0"><div class="tablewrap"><table class="sched"><thead><tr><th>Cct</th><th>Description</th><th>Protection</th><th>RCD</th><th>Cable</th><th>Status</th></tr></thead><tbody>
+  <div class="card" style="padding:0"><div class="tablewrap"><table class="sched"><thead><tr><th>Cct</th><th>Description</th><th>Protection</th><th>RCD</th><th>Cable</th><th class="wo">Cont.</th><th class="wo">IR MΩ</th><th class="wo">Zs Ω</th><th class="wo">RCD ms</th><th>Status</th></tr></thead><tbody>
   ${(b.circuits||[]).map(c=>{ const s=cctStatus(b,c); const cb=c.cable||{};
     const act=s.linked?`data-act="open" data-v="${esc(c.asset)}"`:s.st==='spare'?'':`data-act="cct" data-v="${esc(cctTag(b,c))}"`;
     return `<tr class="${s.st==='spare'?'spare':'click s-'+s.st}" ${act} ${act?'tabindex="0" role="button"':''}>
       <td class="tag">${esc(c.id)}</td><td>${esc(c.desc||'')}${c.asset?` <span class="tag small">${esc(c.asset)}</span>`:''}${c.notes?`<div class="d warnnote">⚠ ${esc(c.notes)}</div>`:''}</td>
       <td>${esc(c.prot||'')}</td><td>${esc(c.rcd==='N'?'–':c.rcd||'')}</td>
       <td class="d">${esc([cb.no,cb.size&&cb.size+'mm²'].filter(Boolean).join(' · '))}</td>
+      ${(r=>`<td class="wo">${esc(r.ct||'')}</td><td class="wo">${esc(r.ir||'')}</td><td class="wo">${esc(r.zs||'')}</td><td class="wo">${esc(r.rcd||'')}</td>`)(s.st==='spare'?{}:cctResults(b,c))}
       <td>${s.st==='spare'?'<span class="pill p-na">Spare</span>':`<span class="pill p-${s.st}">${ST_LABEL[s.st]}</span> <span class="prog">${s.done}/${s.total}</span>`}</td></tr>`;}).join('')}
   </tbody></table></div></div>
   <p class="hint">Tap a circuit to record tests. Circuits that feed an asset open that asset, so the cable is only tested once.</p>`;
@@ -1604,7 +1647,9 @@ function viewDwg(){
     <button class="btn" type="button" data-act="dwgZoom" data-v="1" aria-label="Zoom in">+</button>${panel}
     <label class="hint dwgtog"><input type="checkbox" id="dwgShow" ${S.dwgShow!==false?'checked':''}> Show links</label></div>
   <div class="dwghead"><span class="tag">${esc(d.name)}</span> <b>${esc(p.sheet||'')}</b> ${esc(p.title||'')}<span class="hint"> · sheet ${pi+1} of ${d.pages.length}${p.ocr?' · links read from scanned text, may miss some tags':''}</span></div>
-  <div id="dwgwrap" class="dwgwrap"><div id="dwgstage" class="dwgstage"><div class="dwgload">Loading sheet…</div></div></div>`;
+  <div class="dwgmain"><nav class="dwgside" aria-label="Sheets">${d.pages.map((x,i)=>`<button type="button" class="${i===pi?'on':''}" data-act="dgo" data-v="${esc(d._id)}" data-p="${i}"><b>${esc(x.sheet)}</b> ${esc(x.title)}</button>`).join('')}</nav>
+  <div id="dwgwrap" class="dwgwrap"><div id="dwgstage" class="dwgstage"><div class="dwgload">Loading sheet…</div></div></div></div>
+  <p class="hint wideonly">Scroll wheel zooms · drag to move · ← → change sheet · + − zoom · 0 fit</p>`;
 }
 let dwgRenderSeq=0;
 async function drawDwg(){
@@ -1617,7 +1662,8 @@ async function drawDwg(){
     const rot=((p.rot||0)+page.rotate)%360;
     const base=page.getViewport({scale:1,rotation:rot});
     const wrap=$('#dwgwrap'); const fitW=Math.max(320,wrap.clientWidth-4);
-    const scale=fitW/base.width*(S.dwg.zoom||1);
+    const fit=WIDE()?Math.min(fitW/base.width,Math.max(300,wrap.clientHeight-4)/base.height):fitW/base.width;
+    const scale=fit*(S.dwg.zoom||1);
     const vp=page.getViewport({scale,rotation:rot});
     const dpr=Math.min(window.devicePixelRatio||1,3);
     const cv=document.createElement('canvas'); cv.width=Math.floor(vp.width*dpr); cv.height=Math.floor(vp.height*dpr);
@@ -1635,7 +1681,7 @@ async function drawDwg(){
     (p.links||[]).forEach((l,li)=>{ const hl=S.dwg.hl===li;
       const cls=l.k==='x'?'lx':l.k==='b'?'lb':(dwgResolve(l.v)[1]?'lt':'lu');
       html+=`<button type="button" class="dlink ${cls}${hl?' hl':''}${show||hl?'':' hide'}" data-act="dlink" data-l="${li}" title="${esc(l.k==='x'?'Go to sheet '+l.s+(l.c?' column '+l.c:''):(l.v||l.txt))}" style="left:${l.x*k-2}px;top:${l.y*k-2}px;width:${l.w*k+4}px;height:${l.h*k+4}px"></button>`; });
-    stage.innerHTML=''; stage.style.width=vp.width+'px'; stage.style.height=vp.height+'px'; stage.appendChild(cv); stage.insertAdjacentHTML('beforeend',html);
+    stage.classList.remove('zooming'); stage.innerHTML=''; stage.style.width=vp.width+'px'; stage.style.height=vp.height+'px'; stage.appendChild(cv); stage.insertAdjacentHTML('beforeend',html);
     const tgt=stage.querySelector('.dlink.hl')||stage.querySelector('.dwgcol');
     if(tgt){ const r=tgt.getBoundingClientRect(), w=wrap.getBoundingClientRect(); wrap.scrollLeft+=r.left-w.left-w.width/2+r.width/2; wrap.scrollTop+=r.top-w.top-w.height/2+r.height/2; tgt.scrollIntoView({block:'center',inline:'nearest'}); }
   }catch(e){ if(seq===dwgRenderSeq) stage.innerHTML=`<div class="dwgload">Could not load this drawing (${esc(e.message||e.code||'error')}). ${navigator.onLine?'':'You are offline and this sheet has not been opened on this device before.'}</div>`; }
@@ -1700,6 +1746,26 @@ document.addEventListener('change',e=>{
   if(e.target.id==='dwgShow'){ S.dwgShow=e.target.checked; document.querySelectorAll('.dlink').forEach(x=>x.classList.toggle('hide',!S.dwgShow&&!x.classList.contains('hl'))); }
 });
 document.addEventListener('input',e=>{ if(e.target.id==='dq'){ S.dq=e.target.value; const pos=e.target.selectionStart; render(); const q=$('#dq'); if(q){q.focus(); try{q.setSelectionRange(pos,pos);}catch(_){}} } });
+/* computer: wheel zoom about the pointer, drag to pan, keyboard */
+let dwgWheelT=null;
+document.addEventListener('wheel',e=>{ const wrap=e.target.closest&&e.target.closest('#dwgwrap'); if(!wrap||S.view!=='dwg'||!WIDE()) return; e.preventDefault();
+  const stage=$('#dwgstage'), cv=stage.querySelector('canvas'); if(!cv) return;
+  const z0=S.dwg.zoom||1, z1=Math.min(8,Math.max(1,z0*(e.deltaY<0?1.2:1/1.2))); if(z1===z0) return; const k=z1/z0;
+  const r=wrap.getBoundingClientRect(), sr=stage.getBoundingClientRect(); const px=e.clientX-sr.left, py=e.clientY-sr.top;
+  const w=parseFloat(cv.style.width)*k, h=parseFloat(cv.style.height)*k;
+  stage.classList.add('zooming'); cv.style.width=w+'px'; cv.style.height=h+'px'; stage.style.width=w+'px'; stage.style.height=h+'px';
+  const sr2=stage.getBoundingClientRect(); wrap.scrollLeft+= (sr2.left+px*k)-e.clientX; wrap.scrollTop+= (sr2.top+py*k)-e.clientY;
+  S.dwg.zoom=z1; S.dwg.hl=null; S.dwg.col=null; clearTimeout(dwgWheelT); dwgWheelT=setTimeout(()=>{ const sl=wrap.scrollLeft, st=wrap.scrollTop; drawDwg().then(()=>{ wrap.scrollLeft=sl; wrap.scrollTop=st; }); },220);
+},{passive:false});
+let dwgDrag=null;
+document.addEventListener('pointerdown',e=>{ if(e.pointerType!=='mouse'||e.button!==0) return; const wrap=e.target.closest&&e.target.closest('#dwgwrap'); if(!wrap) return; dwgDrag={x:e.clientX,y:e.clientY,sl:wrap.scrollLeft,st:wrap.scrollTop,wrap,moved:false}; });
+document.addEventListener('pointermove',e=>{ if(!dwgDrag) return; const dx=e.clientX-dwgDrag.x, dy=e.clientY-dwgDrag.y; if(!dwgDrag.moved&&Math.hypot(dx,dy)<5) return; dwgDrag.moved=true; dwgDrag.wrap.classList.add('drag'); dwgDrag.wrap.scrollLeft=dwgDrag.sl-dx; dwgDrag.wrap.scrollTop=dwgDrag.st-dy; });
+document.addEventListener('pointerup',()=>{ if(!dwgDrag) return; const d=dwgDrag; dwgDrag=null; d.wrap.classList.remove('drag'); if(d.moved){ const stop=ev=>{ ev.stopPropagation(); ev.preventDefault(); }; document.addEventListener('click',stop,{capture:true,once:true}); setTimeout(()=>document.removeEventListener('click',stop,{capture:true}),50); } });
+document.addEventListener('keydown',e=>{ if(S.view!=='dwg'||!S.dwg||$('#layer .modal')||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return; const d=S.drawings[S.dwg.id]; if(!d) return;
+  if(e.key==='ArrowRight'&&S.dwg.page<d.pages.length-1){ e.preventDefault(); dwgGo(S.dwg.id,S.dwg.page+1); }
+  else if(e.key==='ArrowLeft'&&S.dwg.page>0){ e.preventDefault(); dwgGo(S.dwg.id,S.dwg.page-1); }
+  else if(e.key==='+'||e.key==='='||e.key==='-'||e.key==='0'){ const z=S.dwg.zoom||1; S.dwg.zoom=e.key==='0'?1:e.key==='-'?Math.max(1,z/1.5):Math.min(8,z*1.5); S.dwg.hl=null; S.dwg.col=null; drawDwg(); }
+  else if(e.key==='Escape'){ S.view='drawings'; S.tab='drawings'; render(); } });
 let dwgResizeT=null; window.addEventListener('resize',()=>{ if(S.view==='dwg'){ clearTimeout(dwgResizeT); dwgResizeT=setTimeout(drawDwg,250); } });
 
 /* ---------- Upload (admins) ---------- */
