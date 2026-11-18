@@ -744,6 +744,7 @@ async function init(){
   S.db=makeDb(); S.dl=DL; S.assetsCap=makeAssets(); S.sample=makeSample(); S.canImg=true;
   S.uid=session.user.id; S.email=session.user.email; S.canWrite=true;
   try{ if(S.noSession) throw 0; const {data,error}=await withTimeout(sb.rpc('is_admin'),8000); if(error) throw error; S.canEdit=!!data; }catch(e){ S.canEdit=!!(ident&&ident.uid===S.uid&&ident.canEdit); }
+  S.canImg=S.canEdit;   // nameplate reading (paid API) is for admin accounts only; others just attach the photo
   if(!S.noSession){ try{ localStorage.setItem('nzes.ident',JSON.stringify({uid:S.uid,email:S.email,canEdit:S.canEdit})); }catch(e){} }
   KV.get('profile:'+S.uid).then(p=>{ if(p&&!S.profile.name){ S.profile=p; render(); } });
   let saved=null; try{ saved=localStorage.getItem('nzes.job'); }catch(e){}
