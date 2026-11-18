@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NZES Test Recorder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2324415f'/%3E%3Cpath d='M18 33l9 9 19-20' stroke='%23f2a900' stroke-width='7' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#24415f">
+<style>
+/* Layout: one column, phone first. Sticky top bar, list of assets, drill into asset, drill into one test section. */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --ink:#16202b; --muted:#5b6876; --line:#d3dae1;
+  --accent:#f2a900; --accent-ink:#1b1400; --steel:#24415f;
+  --pass:#1e8a4c; --fail:#c62f2f; --warn:#b86e00; --part:#2f6fb5;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"Barlow",Arial,Helvetica,sans-serif;
+  --mono:"JetBrains Mono",Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f151b; --surface:#18212a; --ink:#e7edf3; --muted:#9aa8b6; --line:#2c3844;
+    --accent:#f5b82a; --accent-ink:#1b1400; --steel:#9cc0e6;
+    --pass:#43c07a; --fail:#ff6b6b; --warn:#f0a43a; --part:#6aa8f0; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f151b; --surface:#18212a; --ink:#e7edf3; --muted:#9aa8b6; --line:#2c3844;
+  --accent:#f5b82a; --accent-ink:#1b1400; --steel:#9cc0e6;
+  --pass:#43c07a; --fail:#ff6b6b; --warn:#f0a43a; --part:#6aa8f0; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.4}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:.01em;text-wrap:balance}
+.tag{font-family:var(--mono);font-size:.92em}
+.top{position:sticky;top:0;z-index:5;background:var(--steel);color:#fff;padding:10px 16px;display:flex;gap:12px;align-items:center}
+:root[data-theme="dark"] .top{background:#14283d}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .top{background:#14283d}}
+.top h1{font-size:1.35rem;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top h1 small{font-family:var(--body);font-weight:500;font-size:.8rem;opacity:.85;margin-left:8px}
+.top select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:6px 8px;max-width:46vw}
+.top select option{color:#000}
+.iconbtn{background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
+main{max-width:860px;margin:0 auto;padding:14px 16px 90px;display:grid;gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
+.banner{border-left:5px solid var(--warn);background:var(--surface);border-radius:10px;padding:10px 12px;font-size:.95rem}
+.banner.err{border-color:var(--fail)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.stat b{display:block;font-family:var(--display);font-size:1.7rem;line-height:1;font-variant-numeric:tabular-nums}
+.stat span{font-size:.8rem;color:var(--muted)}
+.stat.done b{color:var(--pass)} .stat.part b{color:var(--part)} .stat.fail b{color:var(--fail)}
+.search{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:1.05rem}
+.chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.chip{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;cursor:pointer;font-size:.9rem;white-space:nowrap}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.list{display:grid;gap:8px}
+.row{display:grid;grid-template-columns:6px 1fr auto;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px 10px 0;cursor:pointer;text-align:left;width:100%}
+.row:focus-visible,.btn:focus-visible,.chip:focus-visible,.tile:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.stripe{align-self:stretch;border-radius:10px 0 0 10px;background:var(--line)}
+.s-done .stripe{background:var(--pass)} .s-part .stripe{background:var(--part)} .s-fail .stripe{background:var(--fail)}
+.row .t1{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.row .t1 .tag{font-weight:500}
+.row .d{color:var(--muted);font-size:.92rem}
+.pill{font-size:.78rem;font-weight:600;border-radius:999px;padding:3px 9px;white-space:nowrap;border:1px solid currentColor}
+.p-none{color:var(--muted)} .p-part{color:var(--part)} .p-done{color:var(--pass)} .p-fail{color:var(--fail)} .p-na{color:var(--muted)} .p-warn{color:var(--warn)}
+.prog{font-family:var(--mono);font-size:.8rem;color:var(--muted);text-align:right}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 14px;cursor:pointer;font-weight:600}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.big{padding:14px 18px;font-size:1.05rem}
+.btn.danger{color:var(--fail)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px 14px;margin-top:10px}
+.kv div span{display:block;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.kv div b{font-weight:600;font-variant-numeric:tabular-nums}
+.sechead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:6px 2px 0}
+.sechead h3{font-size:1.15rem}
+.sechead small{color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;text-align:left;display:grid;gap:4px;border-top:4px solid var(--line)}
+.tile.r-pass,.tile.r-rec{border-top-color:var(--pass)} .tile.r-fail{border-top-color:var(--fail)} .tile.r-na{border-top-color:var(--muted)} .tile.r-warn{border-top-color:var(--warn)}
+.tile .h{display:flex;justify-content:space-between;gap:6px;font-weight:600}
+.tile .m{font-size:.85rem;color:var(--muted)}
+.tile .v{font-family:var(--mono);font-size:.8rem;color:var(--ink);overflow-wrap:anywhere}
+.flags{margin-top:10px;font-size:.88rem;color:var(--warn)}
+.flags li{margin:2px 0}
+form.test{display:grid;gap:14px}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.field{display:grid;gap:4px}
+.field label{font-size:.82rem;color:var(--muted);font-weight:600}
+.field input,.field select,.field textarea{padding:11px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);font-size:1.05rem;width:100%;font-variant-numeric:tabular-nums}
+.field input.bad{border-color:var(--fail);box-shadow:0 0 0 2px color-mix(in srgb,var(--fail) 25%,transparent)}
+.field input.good{border-color:var(--pass)}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{flex:1;border:0;background:var(--bg);padding:10px 4px;cursor:pointer;font-weight:600;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"].y{background:var(--pass);color:#fff}
+.seg button[aria-pressed="true"].n{background:var(--fail);color:#fff}
+.seg button[aria-pressed="true"].x{background:var(--muted);color:#fff}
+.seg button[aria-pressed="true"].o{background:var(--steel);color:#fff}
+.checks{display:grid;gap:8px}
+.checkrow{display:grid;grid-template-columns:1fr 170px;gap:10px;align-items:center}
+.safety{border:2px solid var(--warn);border-radius:10px;padding:10px 12px;display:flex;gap:10px;align-items:flex-start}
+.safety input{width:24px;height:24px;margin-top:2px}
+.hint{font-size:.85rem;color:var(--muted)}
+.result{font-family:var(--display);font-size:1.3rem}
+.hist{width:100%;border-collapse:collapse;font-size:.85rem}
+.hist th,.hist td{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+.hist td.v{font-family:var(--mono);font-size:.78rem;overflow-wrap:anywhere}
+.tablewrap{overflow-x:auto}
+.photos{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.photos figure{margin:0;position:relative}
+.photos img{width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--line);display:block;cursor:pointer;background:var(--bg)}
+.photos .rm{position:absolute;top:-6px;right:-6px;width:28px;height:28px;border-radius:50%;border:0;background:var(--fail);color:#fff;font-weight:700;cursor:pointer}
+.camlabel{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-weight:600;cursor:pointer;min-width:200px}
+.camlabel.primary{border-color:var(--accent)}
+.camlabel input[type=file]{font-size:.85rem;color:var(--muted);max-width:100%}
+.camlabel input[type=file]::file-selector-button{font:inherit;font-weight:600;padding:10px 14px;margin-right:8px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink);cursor:pointer}
+.bigphoto{width:100%;max-height:75vh;object-fit:contain;border-radius:8px;background:#000}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;z-index:20;font-weight:600;max-width:90vw}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:15}
+.modal .card{width:min(560px,100%);max-height:90vh;overflow:auto;border-radius:14px 14px 0 0}
+textarea.csv{font-family:var(--mono);font-size:.8rem;min-height:160px}
+@media (max-width:480px){.stats{grid-template-columns:repeat(2,1fr)}.checkrow{grid-template-columns:1fr}}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1 id="title">Test Recorder<small id="jobname">Loading…</small></h1>
+  <select id="jobsel" aria-label="Job"></select>
+  <button class="iconbtn" id="profileBtn" type="button">Me</button>
+</header>
+<main id="app">
+  <div class="card"><h2>Loading assets…</h2><p class="hint">Connecting to the shared test database.</p></div>
+</main>
+<div id="layer"></div>
+<script>
+"use strict";
+/* ================= NZES Test Recorder – Supabase backend =================
+   Fill in these two values from Supabase: Project Settings > API.
+   The anon key is safe to publish – row-level security in schema.sql protects the data. */
+const SUPABASE_URL  = 'https://plsxvvjnydwqqrgqzfui.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsc3h2dmpueWR3cXFyZ3F6ZnVpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ5NTgwNDEsImV4cCI6MjExMDUzNDA0MX0.RB2rNjzaRkfNtBIAqKlQaMHvnBOL0K18khIr0pB3xKY';
+/* ======================================================================= */
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+const errOf = e => ({code: !e ? 'unavailable' : (e.code==='42501'||/row-level security|permission/i.test(e.message||'')) ? 'invalid_argument' : (e.code||'unavailable'), message: e&&e.message||''});
+const asSnap = rows => ({docs: rows.map(r=>({id:r.id, exists:true, data:()=>r.data})), metadata:{fromCache:false}});
+
+/* Minimal document-store API over three tables (jobs, assets, tests) + profiles */
+function makeDb(){
+  const watch=(table,filter,next,error)=>{
+    let alive=true;
+    const load=async()=>{ let q=sb.from(table).select('id,data').order('created_at',{ascending:true}).limit(10000);
+      if(filter) q=q.eq(filter[0],filter[1]);
+      const {data,error:e}=await q; if(!alive) return; if(e){ error&&error(errOf(e)); return; } next(asSnap(data||[])); };
+    let t=null; const soon=()=>{ clearTimeout(t); t=setTimeout(load,250); };
+    const ch=sb.channel(table+'-'+(filter?filter[1]:'all')+'-'+Math.random().toString(36).slice(2))
+      .on('postgres_changes',{event:'*',schema:'public',table,...(filter?{filter:filter[0]+'=eq.'+filter[1]}:{})},soon)
+      .subscribe();
+    load();
+    const onVis=()=>{ if(document.visibilityState==='visible') load(); }; document.addEventListener('visibilitychange',onVis);
+    return ()=>{ alive=false; sb.removeChannel(ch); document.removeEventListener('visibilitychange',onVis); };
+  };
+  const collection=name=>{
+    const q={_f:null,
+      where(field,op,value){ const n=Object.create(q); n._f=[field,value]; return n; },
+      onSnapshot(next,error){ return watch(name,this._f,next,error); },
+      async add(rec){ const {data,error:e}=await sb.from(name).insert({job:rec.job,data:rec}).select('id').single(); if(e) throw errOf(e); return {id:data.id}; }};
+    return q;
+  };
+  const doc=path=>{
+    const parts=path.split('/');
+    if(parts[0]==='data'){ // data/users/<uid>/profile
+      const uid=parts[2];
+      return {async get(){ const {data,error:e}=await sb.from('profiles').select('data').eq('id',uid).maybeSingle(); if(e) throw errOf(e); return {exists:!!data,data:()=>data&&data.data}; },
+              async set(d){ const {error:e}=await sb.from('profiles').upsert({id:uid,data:d}); if(e) throw errOf(e); }};
+    }
+    const [table,id]=parts;
+    return {
+      async set(d){ const row={id,data:d}; if(table!=='jobs') row.job=d.job; const {error:e}=await sb.from(table).upsert(row); if(e) throw errOf(e); },
+      async update(patch){ const {data,error:e}=await sb.from(table).select('data').eq('id',id).single(); if(e) throw errOf(e);
+        const {error:e2}=await sb.from(table).update({data:Object.assign({},data.data,patch)}).eq('id',id); if(e2) throw errOf(e2); },
+      async delete(){ const {error:e}=await sb.from(table).delete().eq('id',id); if(e) throw errOf(e); }
+    };
+  };
+  return {collection,doc};
+}
+/* Photo storage (private bucket "photos", signed URLs) */
+const PHOTO_URLS={};
+function makeAssets(){
+  return {
+    async upload(blob){ const path=new Date().toISOString().slice(0,10)+'/'+crypto.randomUUID()+'.jpg';
+      const {error:e}=await sb.storage.from('photos').upload(path,blob,{contentType:'image/jpeg',upsert:false}); if(e) throw {code:'upstream_error',message:e.message};
+      const url=await photoUrl(path); return {id:path,url}; },
+    async delete(path){ await sb.storage.from('photos').remove([path]); return {deleted:true}; }
+  };
+}
+async function photoUrl(path){
+  if(PHOTO_URLS[path]) return PHOTO_URLS[path];
+  const {data}=await sb.storage.from('photos').createSignedUrl(path,60*60*24*7);
+  PHOTO_URLS[path]=data&&data.signedUrl||''; return PHOTO_URLS[path];
+}
+function photoSrc(path){
+  if(PHOTO_URLS[path]) return PHOTO_URLS[path];
+  photoUrl(path).then(u=>{ document.querySelectorAll('img[data-photo="'+CSS.escape(path)+'"]').forEach(i=>{ i.src=u; }); });
+  return 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+}
+/* Nameplate reading via the read-nameplate edge function (Anthropic API key stays on the server) */
+function makeSample(){
+  const toB64=blob=>new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(String(r.result).split(',')[1]); r.onerror=rej; r.readAsDataURL(blob); });
+  const fn=async(p,o)=>({text:JSON.stringify(await fn.json(p,o))});
+  fn.limits=async()=>({images:{maxCount:1}});
+  fn.json=async(prompt,opts)=>{ const img=opts&&opts.images&&opts.images[0]; if(!img) throw {code:'invalid_request'};
+    const {data,error:e}=await sb.functions.invoke('read-nameplate',{body:{image:await toB64(img)}});
+    if(e) throw {code:'upstream_error',message:e.message}; if(!data||data.error) throw {code:'invalid_json',message:data&&data.error}; return data; };
+  return fn;
+}
+/* Browser downloads */
+const DL={ async save({filename,data}){ const blob=data instanceof Blob?data:new Blob([data],{type:'text/plain'}); const u=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=u; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000); return {status:'saved'}; } };
+
+/* Sign-in screen (email link) */
+function loginView(msg){
+  return `<div class="card" style="max-width:460px;margin:30px auto"><h2>Sign in</h2>
+   <p class="hint">Enter your work email. We'll email you a sign-in link – open it on this phone. You stay signed in after that.</p>
+   <form id="loginForm" class="test"><div class="field"><label for="lg_email">Email</label><input id="lg_email" type="email" inputmode="email" autocomplete="email" required></div>
+   <button class="btn primary big" type="submit">Email me a sign-in link</button><p class="hint" id="lgmsg">${esc(msg||'')}</p></form></div>`;
+}
+function wireLogin(){
+  const f=$('#loginForm'); if(!f) return;
+  f.addEventListener('submit',async e=>{ e.preventDefault(); const email=$('#lg_email').value.trim(); const m=$('#lgmsg'); m.textContent='Sending…';
+    const {error:er}=await sb.auth.signInWithOtp({email,options:{shouldCreateUser:false,emailRedirectTo:location.origin+location.pathname}});
+    m.textContent= er? (/signups not allowed|not found|Signups/i.test(er.message)?'That email is not set up yet – ask James to add you.':'Could not send: '+er.message) : 'Check your email for the sign-in link.'; });
+}
+
+/* ---------------- Test definitions ---------------- */
+const IR_PASS = 1.0;     // MΩ minimum (AS/NZS 3000)
+const CONT_PASS = 1.0;   // Ω maximum
+const YNN = ['Y','N','N/A'];
+const UNIT = {ir:' MΩ',ohm:' Ω',z:' Ω',ms:' ms',amp:' A'};
+const CHECKS_CABLE = ['Cable tied','Cable labelled','Correct cable type / size','Core / ferrule numbers fitted','Correct gland','Lugged correctly','Segregation','Spare cores earthed','Correct colour code','Terminated as per drawings'];
+const CHECKS_STARTER = ['Nameplate fitted','MCC drawing correct','Colour coding correct'];
+
+function coresFor(type){
+  const t=(type||'').toUpperCase();
+  if(/2C\+E/.test(t)) return {cont:['L','N','E'], ir:['P-N','P-E','N-E']};
+  if(/3C\+E/.test(t)||/VSD/.test(t)) return {cont:['L1','L2','L3','E'], ir:['R-Y','Y-B','R-B','R-E','Y-E','B-E']};
+  if(/4C\+E/.test(t)) return {cont:['L1','L2','L3','N','E'], ir:['R-Y','Y-B','R-B','P-N','P-E','N-E']};
+  return {cont:['L1','L2','L3','N','E'], ir:['R-Y','Y-B','R-B','P-N','P-E']};
+}
+function isMotor(a){ return a.sheet==='MCTS'; }
+function is3ph(c){ return /3C\+E|4C\+E|VSD/i.test((c&&c.type)||''); }
+function isDriveOutput(c){ return /^B\d\d(SC|FN)\d\d/i.test((c&&c.no)||''); }   // VSD output or fan-to-fan loop: drive/upstream cable protects it
+function hasRcd(a){ return /RCD|RCBO/i.test(a.prot||''); }
+function needsIsolation(a){ return /SC\d|VSD|EC/i.test((a.starter||'')+' '+(a.model||'')+' '+a.tag) }
+
+/* Sections for an asset: key, title, kind */
+function sectionsFor(a){
+  const s=[];
+  if(isMotor(a)){
+    s.push({key:'np',title:'Motor nameplate',group:'Motor'});
+    s.push({key:'mir',title:'Motor insulation',group:'Motor'});
+    s.push({key:'wr',title:'Winding resistance',group:'Motor'});
+    s.push({key:'rot',title:'Rotation & connections',group:'Motor'});
+    s.push({key:'st',title:'Starter inspection',group:'Motor'});
+  }
+  const cs = (a.cables&&a.cables.length)? a.cables : [{no:'',type:'',size:'',len:''}];
+  cs.forEach((c,i)=>{
+    const g = 'Cable '+(cs.length>1?(i+1)+' of '+cs.length+': ':'')+(c.no||'(no cable no.)');
+    s.push({key:'c'+i+'.ct',title:'Continuity',group:g,cable:i});
+    s.push({key:'c'+i+'.ir',title:'Insulation resistance',group:g,cable:i});
+    s.push({key:'c'+i+'.pol',title:is3ph(c)?'Polarity & phase sequence':'Polarity',group:g,cable:i});
+    if(!isDriveOutput(c)) s.push({key:'c'+i+'.zs',title:'Earth fault-loop impedance',group:g,cable:i});
+    s.push({key:'c'+i+'.ck',title:'Installation checks',group:g,cable:i});
+  });
+  if(hasRcd(a)) s.push({key:'rcd',title:'RCD operation',group:'Protection & function'});
+  s.push({key:'fn',title:'Functional test',group:'Protection & function'});
+  return s;
+}
+
+function fieldsFor(a,sec){
+  const k=sec.key;
+  if(k==='np') return [
+    {id:'kw',label:'kW / HP',type:'text',pre:a.kw},{id:'fla',label:'F.L. amps',type:'num',pre:a.flc},
+    {id:'rpm',label:'RPM',type:'num',pre:a.rpm},{id:'volts',label:'Volts',type:'num',pre:(a.volts||'400').replace(/V/i,'')},
+    {id:'conn',label:'Connection',type:'seg',opts:['Star','Delta','EC/Int.','N/A']},
+    {id:'mount',label:'Mounting',type:'seg',opts:['Foot','Flange','Other']},
+    {id:'serial',label:'Serial no.',type:'text'},{id:'model',label:'Model no.',type:'text'},{id:'frame',label:'Frame',type:'text'}];
+  if(k==='mir') return [
+    {id:'tv',label:'Test voltage',type:'seg',opts:['250V','500V','1000V'],pre:'500V'},
+    {id:'R-E',label:'R-E',type:'ir'},{id:'Y-E',label:'Y-E',type:'ir'},{id:'B-E',label:'B-E',type:'ir'},
+    {id:'R-Y',label:'R-Y',type:'ir'},{id:'R-B',label:'R-B',type:'ir'},{id:'Y-B',label:'Y-B',type:'ir'}];
+  if(k==='wr') return [
+    {id:'R-Y',label:'R-Y',type:'ohm'},{id:'R-B',label:'R-B',type:'ohm'},{id:'Y-B',label:'Y-B',type:'ohm'},
+    {id:'earth',label:'Motor earth',type:'ohm'}];
+  if(k==='rot') return [
+    {id:'dir',label:'Rotation (non-drive end)',type:'seg',opts:['Clockwise','Anti-clockwise']},
+    {id:'correct',label:'Correct rotation confirmed',type:'ynna'},
+    {id:'conn',label:'Connections checked',type:'ynna'},{id:'earth',label:'Earth connected',type:'ynna'}];
+  if(k==='st') return [
+    {id:'mcc',label:'MCC / panel no.',type:'text',pre:a.fed},{id:'stype',label:'Starter type',type:'text',pre:a.starter},
+    {id:'fuse',label:'Motor fuse / CB size',type:'text',pre:a.prot},{id:'cfuse',label:'Control fuse',type:'text'},
+    {id:'coil',label:'Coil voltage',type:'text'},{id:'cable',label:'Motor cable size',type:'text',pre:a.cables&&a.cables[0]?(a.cables[0].size+'mm²'):''},
+    {id:'ct',label:'CT ratio',type:'text'},{id:'ol',label:'Overload setting',type:'text',pre:a.ol},
+    ...CHECKS_STARTER.map((c,i)=>({id:'sc'+i,label:c,type:'ynna',check:true}))];
+  const c=(a.cables||[])[sec.cable]||{};
+  const cores=coresFor(c.type);
+  if(k.endsWith('.ct')) return [
+    {id:'src',label:'Source',type:'text',pre:a.fed},{id:'dst',label:'Destination',type:'text',pre:a.tag},
+    ...cores.cont.map(x=>({id:x,label:x+' end-to-end',type:'ohm'})),
+    {id:'pe',label:'Earth bar to equipment frame',type:'ohm'}];
+  if(k.endsWith('.ir')) return [
+    {id:'tv',label:'Test voltage',type:'seg',opts:['250V','500V','1000V'],pre:/VSD|SC\d/.test(a.tag+c.type)?'1000V':'500V'},
+    ...cores.ir.map(x=>({id:x,label:x,type:'ir'}))];
+  if(k.endsWith('.pol')) return [
+    {id:'pol',label:'Polarity correct (active switched, terminals correct)',type:'ynna'},
+    ...(is3ph(c)?[{id:'seq',label:'Phase sequence correct (L1-L2-L3)',type:'ynna'}]:[])];
+  if(k.endsWith('.zs')) return [
+    {id:'dev',label:'Protective device',type:'text',pre:a.prot},
+    {id:'curve',label:'Curve / type',type:'seg',opts:['B','C','D','MCCB','Fuse']},
+    {id:'zs',label:'Zs measured',type:'z'},
+    {id:'zmax',label:'Zs max (App. G)',type:'z'},
+    {id:'pfc',label:'PFC / PSCC (kA)',type:'num'}];
+  if(k==='rcd') return [
+    {id:'ma',label:'Rated IΔn',type:'seg',opts:['10mA','30mA','100mA','300mA'],pre:'30mA'},
+    {id:'rtype',label:'RCD type',type:'seg',opts:['AC','A','F','B']},
+    {id:'t1',label:'Trip time at 1× IΔn',type:'ms',max:300},
+    {id:'t5',label:'Trip time at 5× IΔn',type:'ms',max:40},
+    {id:'half',label:'Does NOT trip at ½ × IΔn',type:'ynna'},
+    {id:'btn',label:'Test button operates',type:'ynna'}];
+  if(k==='fn'){
+    const m=isMotor(a)||/HE\d/.test(a.tag);
+    return [
+    ...(m?[{id:'Ia',label:'Running current L1',type:'amp'},{id:'Ib',label:'Running current L2',type:'amp'},{id:'Ic',label:'Running current L3',type:'amp'},
+           {id:'ol',label:'Overload / drive current limit (A)',type:'text'}]:[]),
+    {id:'runs',label:'Operates / runs correctly',type:'ynna'},
+    {id:'iso',label:'Isolator / local stop operates',type:'ynna'},
+    {id:'estop',label:'E-stop & interlocks function',type:'ynna'},
+    {id:'ind',label:'Run / fault indication correct (HMI / lights)',type:'ynna'}];
+  }
+  if(k.endsWith('.ck')) return CHECKS_CABLE.map((x,i)=>({id:'k'+i,label:x,type:'ynna',check:true}));
+  return [];
+}
+
+function parseNum(v){
+  if(v==null) return NaN; const s=String(v).trim().toUpperCase();
+  if(!s) return NaN;
+  if(/^(OL|INF|∞|>)/.test(s)) return Infinity;
+  const n=parseFloat(s.replace(',','.')); return n;
+}
+function judge(a,sec,vals,na){
+  if(na) return {result:'na',why:''};
+  const f=fieldsFor(a,sec); let fail=[],warn=[],filled=0;
+  for(const x of f){
+    const v=vals[x.id]; if(v!==undefined && v!=='') filled++;
+    if(x.type==='ir'){ const n=parseNum(v); if(!isNaN(n) && n<IR_PASS) fail.push(x.label+' '+v+' MΩ < '+IR_PASS); }
+    if(x.type==='ohm' && sec.key!=='wr'){ const n=parseNum(v); if(!isNaN(n) && n>CONT_PASS) fail.push(x.label+' '+v+' Ω > '+CONT_PASS); }
+    if(x.type==='ynna' && v==='N') fail.push(x.label+': No');
+    if(x.type==='ms' && x.max){ const n=parseNum(v); if(isFinite(n) && n>x.max) fail.push(x.label+' '+v+' ms > '+x.max); }
+    if(x.type==='amp'){ const n=parseNum(v), fl=parseNum(a.flc); if(isFinite(n)&&isFinite(fl)&&fl>0&&n>fl) warn.push(x.label+' '+v+' A above FLC '+a.flc+' A'); }
+  }
+  if(sec.key.endsWith('.zs')){
+    const z=parseNum(vals.zs), zm=parseNum(vals.zmax);
+    if(isFinite(z)&&isFinite(zm)&&z>zm) fail.push('Zs '+vals.zs+' Ω > max '+vals.zmax+' Ω');
+    else if(isFinite(z)&&!isFinite(zm)) warn.push('Enter Zs max to confirm disconnection time');
+  }
+  if(sec.key==='wr'){
+    const ph=['R-Y','R-B','Y-B'].map(i=>parseNum(vals[i])).filter(n=>isFinite(n)&&n>0);
+    if(ph.length===3){ const mx=Math.max(...ph), mn=Math.min(...ph); if((mx-mn)/mn>0.05) warn.push('Winding imbalance '+(((mx-mn)/mn)*100).toFixed(1)+'% (>5%)'); }
+  }
+  if(!filled) return {result:'',why:'Nothing entered'};
+  if(fail.length) return {result:'fail',why:fail.join('; ')};
+  if(warn.length) return {result:'warn',why:warn.join('; ')};
+  const measured=f.some(x=>['ir','ohm','ynna','z','ms','amp'].includes(x.type));
+  return {result: measured?'pass':'rec', why:''};
+}
+
+/* ---------------- State ---------------- */
+const S={db:null,user:null,uid:null,canWrite:null,canEdit:false,dl:null,assetsCap:null,sample:null,canImg:false,
+  jobs:{},job:null,assets:{},tests:[],latest:{},profile:{},view:'home',asset:null,section:null,
+  q:'',group:'All',status:'All',loaded:{a:false,t:false},stale:false,error:null,unsub:[]};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const idOf=(job,tag)=>(job+'~'+tag).replace(/[^A-Za-z0-9_\-.~:@+]+/g,'-').replace(/-+/g,'-').replace(/-$/,'');
+function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),2600);}
+const irMax=()=>String(S.profile.irMax||'999').replace(/[^0-9.]/g,'')||'999';
+const today=()=>new Date().toISOString().slice(0,10);
+const fmtDate=iso=>iso?new Date(iso).toLocaleDateString('en-NZ',{day:'2-digit',month:'short',year:'numeric'}):'';
+
+function rebuildLatest(){
+  const L={};
+  const ts=S.tests.filter(t=>!t.voided).sort((x,y)=>(x.at||'').localeCompare(y.at||''));
+  for(const t of ts){ L[t.asset+'|'+t.section]=t; }
+  S.latest=L;
+}
+function assetStatus(a){
+  const secs=sectionsFor(a); let done=0,fail=false,any=false;
+  for(const s of secs){ const t=S.latest[a.tag+'|'+s.key]; if(t){any=true; if(t.result==='fail') fail=true; else done++; } }
+  const st= fail?'fail': done===secs.length?'done': any?'part':'none';
+  return {st,done,total:secs.length};
+}
+const ST_LABEL={none:'Not started',part:'In progress',done:'Complete',fail:'Has a fail'};
+
+/* ---------------- Data wiring ---------------- */
+async function init(){
+  renderShell();
+  const {data:{session}}=await sb.auth.getSession();
+  sb.auth.onAuthStateChange((ev,sess)=>{ if(ev==='SIGNED_IN'&&!S.uid) location.reload(); if(ev==='SIGNED_OUT') location.reload(); });
+  if(!session){ $('#app').innerHTML=loginView(); wireLogin(); $('#jobname').textContent='Not signed in'; $('#jobsel').style.display='none'; return; }
+  S.db=makeDb(); S.dl=DL; S.assetsCap=makeAssets(); S.sample=makeSample(); S.canImg=true;
+  S.uid=session.user.id; S.email=session.user.email; S.canWrite=true;
+  try{ const {data}=await sb.rpc('is_admin'); S.canEdit=!!data; }catch(e){ S.canEdit=false; }
+  let saved=null; try{ saved=localStorage.getItem('nzes.job'); }catch(e){}
+  S.db.doc('data/users/'+S.uid+'/profile').get().then(d=>{ if(d.exists){ S.profile=d.data()||{}; render(); } }).catch(()=>{});
+  const timer=setTimeout(()=>{ S.stale=true; render(); },10000);
+  S.db.collection('jobs').onSnapshot(snap=>{
+    clearTimeout(timer); S.stale=false;
+    S.jobs={}; snap.docs.forEach(d=>S.jobs[d.id]=d.data());
+    const ids=Object.keys(S.jobs);
+    if(!S.job || !S.jobs[S.job]) switchJob(ids.includes(saved)?saved:(ids[0]||null));
+    renderJobs(); render();
+  },e=>{ clearTimeout(timer); S.error='Could not load jobs ('+e.code+').'; render(); });
+}
+function switchJob(id){
+  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.latest={}; S.loaded={a:false,t:false};
+  try{ if(id) localStorage.setItem('nzes.job',id); }catch(e){}
+  if(!id){ render(); return; }
+  const t2=setTimeout(()=>{ S.stale=true; render(); },10000);
+  S.unsub.push(S.db.collection('assets').where('job','==',id).onSnapshot(snap=>{
+    if(!snap.metadata.fromCache){ clearTimeout(t2); S.stale=false; }
+    S.assets={}; snap.docs.forEach(d=>{const a=d.data(); S.assets[a.tag]=a;}); S.loaded.a=true; render();
+  },e=>{ S.error='Could not load assets ('+e.code+').'; render(); }));
+  S.unsub.push(S.db.collection('tests').where('job','==',id).onSnapshot(snap=>{
+    S.tests=snap.docs.map(d=>Object.assign({_id:d.id},d.data())); S.loaded.t=true; rebuildLatest(); render();
+  },e=>{ S.error='Could not load test results ('+e.code+').'; render(); }));
+  renderJobs();
+}
+function renderJobs(){
+  const sel=$('#jobsel'); const ids=Object.keys(S.jobs).sort();
+  sel.innerHTML=ids.map(i=>`<option value="${esc(i)}" ${i===S.job?'selected':''}>${esc(i)}</option>`).join('') + (S.canEdit?'<option value="__new">+ New job…</option>':'');
+  sel.style.display=ids.length||S.canEdit?'':'none';
+  $('#jobname').textContent = S.job&&S.jobs[S.job]? S.jobs[S.job].name : (ids.length?'':'No jobs yet');
+}
+
+/* ---------------- Rendering ---------------- */
+function renderShell(){
+  $('#jobsel').addEventListener('change',e=>{
+    const v=e.target.value; if(v==='__new'){ openJobModal(); renderJobs(); return; }
+    switchJob(v); S.view='home'; render();
+  });
+  $('#profileBtn').addEventListener('click',openProfile);
+  document.addEventListener('click',onClick);
+}
+function render(){
+  const m=$('#app');
+  const top=[];
+  if(S.error) top.push(`<div class="banner err">${esc(S.error)}</div>`);
+  else if(S.stale) top.push(`<div class="banner">Can't reach the database right now. Results shown may be out of date; saves will go through when signal returns.</div>`);
+
+  if(S.db && !S.profile.name && S.uid) top.push(`<div class="banner">Set your name, registration no. and test instrument under <b>Me</b> so they go on every sheet. <button class="btn" data-act="profile" type="button">Set up</button></div>`);
+  if(S.profile.calDue && S.profile.calDue < today()) top.push(`<div class="banner err">Your instrument calibration was due ${esc(fmtDate(S.profile.calDue))}. Results can still be saved but will show this on the sheet.</div>`);
+  let body='';
+  if(!S.db && !S.error) return;
+  if(!S.db || S.error) body='';
+  else if(!S.job) body=`<div class="card"><h2>No jobs yet</h2><p class="hint">${S.canEdit?'Create a job from the job menu, then import its asset list.':'Nothing has been set up yet.'}</p></div>`;
+  else if(!S.loaded.a) body=`<div class="card"><h2>Loading assets…</h2></div>`;
+  else if(S.view==='asset' && S.assets[S.asset]) body=viewAsset(S.assets[S.asset]);
+  else if(S.view==='form' && S.assets[S.asset]) body=viewForm(S.assets[S.asset],S.section);
+  else body=viewHome();
+  m.innerHTML=top.join('')+body;
+  if(S.view==='form') wireForm();
+}
+
+function filteredAssets(){
+  const q=S.q.trim().toLowerCase();
+  return Object.values(S.assets).filter(a=>{
+    if(S.group!=='All' && a.group!==S.group) return false;
+    if(S.status!=='All' && assetStatus(a).st!==S.status) return false;
+    if(!q) return true;
+    const hay=(a.tag+' '+a.desc+' '+a.area+' '+(a.cables||[]).map(c=>c.no).join(' ')).toLowerCase();
+    return q.split(/\s+/).every(w=>hay.includes(w));
+  }).sort((x,y)=>(x.order??999)-(y.order??999)||x.tag.localeCompare(y.tag));
+}
+function viewHome(){
+  const all=Object.values(S.assets); const c={none:0,part:0,done:0,fail:0};
+  all.forEach(a=>c[assetStatus(a).st]++);
+  const groups=['All',...[...new Set(all.map(a=>a.group).filter(Boolean))]];
+  const list=filteredAssets();
+  return `
+  <div class="stats">
+    <div class="stat done"><b>${c.done}</b><span>Complete</span></div>
+    <div class="stat part"><b>${c.part}</b><span>In progress</span></div>
+    <div class="stat fail"><b>${c.fail}</b><span>Has a fail</span></div>
+    <div class="stat"><b>${c.none}</b><span>Not started</span></div>
+  </div>
+  <input class="search" id="q" type="search" placeholder="Search tag, description or cable no." value="${esc(S.q)}" autocomplete="off">
+  <div class="chips" role="group" aria-label="Group">${groups.map(g=>`<button class="chip" type="button" data-act="group" data-v="${esc(g)}" aria-pressed="${S.group===g}">${esc(g)}</button>`).join('')}</div>
+  <div class="chips" role="group" aria-label="Status">${['All','none','part','fail','done'].map(s=>`<button class="chip" type="button" data-act="status" data-v="${s}" aria-pressed="${S.status===s}">${s==='All'?'Any status':ST_LABEL[s]}</button>`).join('')}</div>
+  <div class="actions">
+    <button class="btn primary" type="button" data-act="pdfList" ${list.length?'':'disabled'}>Test sheets PDF (${list.length})</button>
+    <button class="btn" type="button" data-act="csv">Export results CSV</button>
+    ${S.canEdit?'<button class="btn" type="button" data-act="addDev">+ Add device</button><button class="btn" type="button" data-act="import">Import CSV</button>':''}
+  </div>
+  <div class="list">${list.map(rowHtml).join('')||'<div class="card hint">No assets match.</div>'}</div>`;
+}
+function rowHtml(a){
+  const s=assetStatus(a);
+  return `<button class="row s-${s.st}" type="button" data-act="open" data-v="${esc(a.tag)}">
+    <span class="stripe"></span>
+    <span><span class="t1"><span class="tag">${esc(a.tag)}</span><span class="d">${esc(a.type||'')}</span></span>
+    <span class="d" style="display:block;color:var(--ink)">${esc(a.desc)}</span>
+    <span class="d">${esc(a.group||a.area||'')}${a.kw?' · '+esc(a.kw)+' kW':''}${a.cables&&a.cables[0]?' · '+esc(a.cables[0].no):''}</span></span>
+    <span style="display:grid;gap:4px;justify-items:end"><span class="pill p-${s.st}">${ST_LABEL[s.st]}</span><span class="prog">${s.done}/${s.total}</span></span>
+  </button>`;
+}
+function valSummary(a,sec,t){
+  if(!t) return '';
+  if(t.result==='na') return 'N/A'+(t.notes?' – '+t.notes:'');
+  const f=fieldsFor(a,sec); const unit=x=>UNIT[x.type]||'';
+  if(sec.key.endsWith('.ck')||sec.key==='st'){
+    const n=f.filter(x=>x.check&&t.values[x.id]==='N').length, y=f.filter(x=>x.check&&t.values[x.id]==='Y').length;
+    if(sec.key==='st') return [t.values.fuse,t.values.ol&&('OL '+t.values.ol)].filter(Boolean).join(' · ')+(y||n?` · ${y}✓ ${n}✗`:'');
+    return `${y} yes · ${n} no`;
+  }
+  if(sec.key.endsWith('.ct') && f.filter(x=>x.type==='ohm').every(x=>t.values[x.id]==='OK')) return 'Continuity OK – all cores';
+  return f.filter(x=>t.values[x.id]).map(x=>x.label+' '+t.values[x.id]+(isNaN(parseNum(t.values[x.id]))?'':unit(x))).join(' · ');
+}
+function viewAsset(a){
+  const secs=sectionsFor(a); const st=assetStatus(a);
+  let groups={}; secs.forEach(s=>(groups[s.group]=groups[s.group]||[]).push(s));
+  const hist=S.tests.filter(t=>t.asset===a.tag).sort((x,y)=>(y.at||'').localeCompare(x.at||''));
+  const sl={};secs.forEach(s=>sl[s.key]=s);
+  return `
+  <div class="actions"><button class="btn" type="button" data-act="home">← All assets</button>
+    <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>
+    ${S.canEdit?'<button class="btn" type="button" data-act="editDev">Edit device</button>':''}</div>
+  <div class="card">
+    <div class="sechead"><h2><span class="tag">${esc(a.tag)}</span></h2><span class="pill p-${st.st}">${ST_LABEL[st.st]} · ${st.done}/${st.total}</span></div>
+    <div style="font-size:1.1rem;margin-top:4px">${esc(a.desc)}</div>
+    <div class="kv">
+      ${kv('Area',a.area)}${kv('Type',a.type)}${kv('Test sheet',a.sheet==='MCTS'?'Motor & Cable':'Cable')}
+      ${kv('kW',a.kw)}${kv('FLC (A)',a.flc)}${kv('Starter',a.starter)}${kv('Protection',a.prot)}${kv('Fed from',a.fed)}
+      ${kv('Make / model',[a.make,a.model].filter(Boolean).join(' '))}${kv('Volts',a.volts)}${kv('Phases',a.phases)}${kv('RPM',a.rpm)}
+      ${kv('Overload (A)',a.ol)}${kv('Coil',a.coil)}${kv('Drives',a.driven)}${kv('Supply rating (A)',a.rating)}${kv('IP',a.ipr)}
+    </div>
+    ${a.photos&&a.photos.length?`<div class="photos">${photoStrip(a.photos,false)}</div>`:''}
+    ${a.notes&&a.notes.length?`<ul class="flags">${a.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}
+  </div>
+  ${Object.entries(groups).map(([g,ss])=>`
+    <div class="sechead"><h3>${esc(g)}</h3>${ss[0].cable!=null&&a.cables&&a.cables[ss[0].cable]?`<small>${esc([a.cables[ss[0].cable].type,a.cables[ss[0].cable].size&&a.cables[ss[0].cable].size+'mm²',a.cables[ss[0].cable].len&&a.cables[ss[0].cable].len+'m'].filter(Boolean).join(' · '))}</small>`:''}</div>
+    <div class="tiles">${ss.map(s=>{const t=S.latest[a.tag+'|'+s.key];
+      const r=t?t.result:''; const lab=t?({pass:'Pass',fail:'FAIL',na:'N/A',rec:'Recorded',warn:'Check'}[r]||'Saved'):'To do';
+      return `<button class="tile ${r?'r-'+r:''}" type="button" data-act="sec" data-v="${esc(s.key)}">
+        <span class="h"><span>${esc(s.title)}</span><span class="pill p-${r==='pass'||r==='rec'?'done':r==='fail'?'fail':r==='warn'?'warn':r==='na'?'na':'none'}">${lab}</span></span>
+        ${t?`<span class="m">${esc(t.testerName||'')} · ${esc(fmtDate(t.testDate||t.at))}</span><span class="v">${esc(valSummary(a,s,t))}</span>`:'<span class="m">Tap to record</span>'}
+      </button>`;}).join('')}</div>`).join('')}
+  <div class="card"><h3>History</h3>
+   ${hist.length?`<div class="tablewrap"><table class="hist"><thead><tr><th>Date</th><th>Test</th><th>By</th><th>Result</th><th>Values</th>${S.canEdit?'<th></th>':''}</tr></thead><tbody>
+   ${hist.map(t=>{const s=sl[t.section]; return `<tr style="${t.voided?'opacity:.5;text-decoration:line-through':''}"><td>${esc(fmtDate(t.testDate||t.at))}</td><td>${esc(s?(s.group.startsWith('Cable')&&secs.filter(x=>x.cable!=null).length>3?s.group.split(':')[0]+' ':'')+s.title:t.section)}</td><td>${esc(t.testerName||'')}</td><td>${esc(t.result||'')}</td><td class="v">${esc(s?valSummary(a,s,t):'')}${t.notes?' – '+esc(t.notes):''}</td>${S.canEdit&&!t.voided?`<td><button class="btn danger" type="button" data-act="void" data-v="${esc(t._id)}">Void</button></td>`:S.canEdit?'<td></td>':''}</tr>`}).join('')}
+   </tbody></table></div>`:'<p class="hint">No tests recorded yet. Each test you save is kept here with who did it and when; the test sheet always uses the latest one.</p>'}
+  </div>`;
+}
+const kv=(k,v)=>v===undefined||v===null||v===''?'':`<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`;
+
+/* ---------------- Form ---------------- */
+let F=null; // current form state
+function viewForm(a,key){
+  const sec=sectionsFor(a).find(s=>s.key===key); if(!sec){S.view='asset';return viewAsset(a);}
+  const prev=S.latest[a.tag+'|'+key];
+  const fields=fieldsFor(a,sec);
+  const vals={}; fields.forEach(f=>{ vals[f.id]= prev&&prev.values&&prev.values[f.id]!==undefined? prev.values[f.id] : (f.pre!==undefined&&f.pre!==null?String(f.pre):''); });
+  F={a,sec,fields,vals,na:prev?prev.result==='na':false,iso:false,photo:'',prevPhoto:prev&&prev.photo||''};
+  const P=S.profile;
+  const iso = (key==='mir'||key.endsWith('.ir')) && needsIsolation(a);
+  const hasIR=fields.some(f=>f.type==='ir'); const hasCk=fields.some(f=>f.type==='ynna');
+  const c=sec.cable!=null?(a.cables||[])[sec.cable]:null;
+  return `
+  <div class="actions"><button class="btn" type="button" data-act="back">← ${esc(a.tag)}</button></div>
+  <form class="test card" id="tform" autocomplete="off">
+    <div><h2>${esc(sec.title)}</h2><div class="hint"><span class="tag">${esc(a.tag)}</span> · ${esc(a.desc)}${c?' · <span class="tag">'+esc(c.no)+'</span> '+esc([c.type,c.size&&c.size+'mm²'].filter(Boolean).join(' ')):''}</div>
+    ${prev?`<div class="hint">Last saved by ${esc(prev.testerName||'?')} on ${esc(fmtDate(prev.testDate||prev.at))}. Saving again keeps that record in history.</div>`:''}</div>
+    ${iso?`<label class="safety"><input type="checkbox" id="isoChk"><span><b>Before testing:</b> drive / EC fan electronics are isolated and disconnected from the circuit under test. Do not insulation-test through a VSD or EC motor controller.</span></label>`:''}
+    <div class="fgrid" id="fgrid">${fields.filter(f=>f.type!=='ynna').map(fieldHtml).join('')}</div>
+    ${key==='np'?`<div class="actions">${S.canImg?'<label class="camlabel primary" for="np_cam">🔎 Photo the nameplate – fill these in<input id="np_cam" type="file" accept="image/*" capture="environment"></label>':''}
+      ${!S.canImg&&S.assetsCap?'<label class="camlabel" for="np_cam">📷 Photo the nameplate<input id="np_cam" type="file" accept="image/*" capture="environment"></label>':''}
+      <span class="hint" id="npmsg" style="align-self:center"></span></div>${S.canImg||S.assetsCap?camHint():''}<div class="photos" id="npphoto">${prev&&prev.photo?photoStrip([prev.photo],false):''}</div>`:''}
+    ${hasIR?`<div class="actions"><button class="btn" type="button" data-act="fillIR">Set all IR to &gt;${esc(irMax())} MΩ</button><span class="hint" style="align-self:center">Pass ≥ ${IR_PASS} MΩ</span></div>`:''}
+    ${key.endsWith('.ct')?`<div class="actions"><button class="btn primary" type="button" data-act="fillCont">✓ Tick continuity OK – all cores</button><span class="hint" style="align-self:center">Or enter readings. Pass ≤ ${CONT_PASS} Ω</span></div>`:fields.some(f=>f.type==='ohm')&&key!=='wr'?`<div class="hint">Pass ≤ ${CONT_PASS} Ω</div>`:''}
+    ${key.endsWith('.zs')?'<div class="hint">Test live at the furthest point of the circuit. Take Zs max from AS/NZS 3000 Appendix G or the device maker for the required disconnection time.</div>':''}
+    ${key==='rcd'?'<div class="hint">Pass: 1× IΔn ≤ 300 ms, 5× IΔn ≤ 40 ms, no trip at ½ IΔn.</div>':''}
+    ${key==='fn'&&F.a.flc?'<div class="hint">FLC '+esc(F.a.flc)+' A – running current above this is flagged.</div>':''}
+    ${hasCk?`<div class="checks">${fields.filter(f=>f.type==='ynna').map(fieldHtml).join('')}</div>
+      ${fields.filter(f=>f.type==='ynna').length>3?'<div class="actions"><button class="btn" type="button" data-act="allY">Mark all Yes</button></div>':''}`:''}
+    <div class="fgrid">
+      <div class="field"><label for="f_tester">Tested by</label><input id="f_tester" value="${esc(P.name||'')}" required></div>
+      <div class="field"><label for="f_date">Test date</label><input id="f_date" type="date" value="${today()}"></div>
+      ${(hasIR||fields.some(f=>f.type==='ohm'))?`<div class="field"><label for="f_inst">Instrument</label><input id="f_inst" value="${esc(P.instrument||'')}"></div>
+      <div class="field"><label for="f_ser">Instrument serial</label><input id="f_ser" value="${esc(P.serial||'')}"></div>`:''}
+    </div>
+    <div class="field"><label for="f_notes">Notes</label><textarea id="f_notes" rows="2" placeholder="Anything the next person needs to know">${esc(prev&&prev.notes||'')}</textarea></div>
+    <label class="hint" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="naChk" ${F.na?'checked':''}> Not applicable to this asset (say why in notes)</label>
+    <div class="result" id="resultLine"></div>
+    <button class="btn primary big" type="submit" id="saveBtn" ${S.canWrite===false?'disabled':''}>Save test</button>
+  </form>`;
+}
+function fieldHtml(f){
+  const v=F.vals[f.id]??''; const id='v_'+f.id.replace(/[^A-Za-z0-9]/g,'_');
+  if(f.type==='seg'||f.type==='ynna'){
+    const opts=f.type==='ynna'?YNN:f.opts;
+    const cls=o=>f.type==='ynna'?(o==='Y'?'y':o==='N'?'n':'x'):'o';
+    const seg=`<div class="seg" role="group" aria-label="${esc(f.label)}">${opts.map(o=>`<button type="button" class="${cls(o)}" data-act="seg" data-f="${esc(f.id)}" data-v="${esc(o)}" aria-pressed="${v===o}">${esc(o==='Y'?'Yes':o==='N'?'No':o)}</button>`).join('')}</div>`;
+    if(f.type==='ynna') return `<div class="checkrow"><span>${esc(f.label)}</span>${seg}</div>`;
+    return `<div class="field" style="grid-column:span 2"><label>${esc(f.label)}</label>${seg}</div>`;
+  }
+  const unit=UNIT[f.type]?' ('+UNIT[f.type].trim()+')':'';
+  const im=f.type==='text'?'text':'decimal';
+  return `<div class="field"><label for="${id}">${esc(f.label+unit)}</label><input id="${id}" data-f="${esc(f.id)}" data-t="${f.type}" inputmode="${im}" value="${esc(v)}"></div>`;
+}
+function wireForm(){
+  const form=$('#tform'); if(!form) return;
+  form.addEventListener('input',e=>{ const f=e.target.dataset&&e.target.dataset.f; if(f){F.vals[f]=e.target.value; markInput(e.target); if(f==='zmax'){const zi=form.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);}} if(e.target.id==='naChk'){F.na=e.target.checked;} updateResult(); });
+  form.addEventListener('change',e=>{ if(e.target.id==='naChk'){F.na=e.target.checked; updateResult();} });
+  form.addEventListener('submit',e=>{ e.preventDefault(); saveTest(); });
+  form.querySelectorAll('input[data-f]').forEach(markInput); updateResult();
+  const npc=$('#np_cam'); if(npc) npc.addEventListener('change',async e=>{ const f=(e.target.files||[])[0]; e.target.value=''; if(!f) return;
+    const msg=$('#npmsg'); const blob=await shrinkImage(f);
+    if(S.assetsCap){ S.assetsCap.upload(blob,{type:'image/jpeg'}).then(r=>{ F.photo=r.id; $('#npphoto').innerHTML=photoStrip([r.id],false); }).catch(()=>{ msg.textContent='Photo not stored – values still read'; }); }
+    if(!S.canImg){ msg.textContent='Photo attached'; return; }
+    msg.textContent='Reading nameplate… (can take ~20 s)';
+    try{ const d=await readNameplate(blob); let n=0;
+      const set=(id,v)=>{ v=String(v??'').trim(); if(!v) return; F.vals[id]=v; n++; const el=form.querySelector('input[data-f="'+id+'"]'); if(el) el.value=v;
+        const sg=form.querySelector('.seg [data-f="'+id+'"]'); if(sg) form.querySelectorAll('.seg [data-f="'+id+'"]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===v)); };
+      set('kw',d.kw); set('fla',d.flc); set('rpm',d.rpm); set('volts',String(d.volts||'').replace(/[^0-9\/]/g,'')); set('serial',d.serial); set('model',[d.make,d.model].filter(Boolean).join(' ')); set('frame',d.frame);
+      if(/star|wye|\bY\b/i.test(d.connection||'')) set('conn','Star'); else if(/delta|Δ/i.test(d.connection||'')) set('conn','Delta');
+      updateResult(); msg.textContent= n?'Filled '+n+' fields – check against the plate'+(d.notes?' ('+d.notes+')':''):'Could not read the plate – try a closer, square-on photo';
+    }catch(err){ msg.textContent= err.code==='not_granted'?'Allow Claude access to read nameplates':'Nameplate read failed ('+(err.code||'error')+') – enter manually'; }
+  });
+}
+function markInput(el){
+  const t=el.dataset.t; const n=parseNum(el.value); el.classList.remove('bad','good');
+  if(el.value==='OK'){ el.classList.add('good'); return; }
+  if(!el.value||isNaN(n)) return;
+  if(t==='ir') el.classList.add(n<IR_PASS?'bad':'good');
+  if(t==='ohm' && F.sec.key!=='wr') el.classList.add(n>CONT_PASS?'bad':'good');
+  if(t==='ms'){ const f=F.fields.find(x=>x.id===el.dataset.f); if(f&&f.max) el.classList.add(n>f.max?'bad':'good'); }
+  if(t==='z' && el.dataset.f==='zs'){ const zm=parseNum(F.vals.zmax); if(isFinite(zm)) el.classList.add(n>zm?'bad':'good'); }
+}
+function updateResult(){
+  const j=judge(F.a,F.sec,F.vals,F.na); const el=$('#resultLine'); if(!el) return;
+  const map={pass:['PASS','var(--pass)'],fail:['FAIL','var(--fail)'],warn:['CHECK','var(--warn)'],na:['NOT APPLICABLE','var(--muted)'],rec:['Recorded','var(--pass)'],'':['','var(--muted)']};
+  const [t,c]=map[j.result]; el.style.color=c; el.textContent=t+(j.why?' — '+j.why:'');
+}
+async function saveTest(){
+  const btn=$('#saveBtn'); const tester=$('#f_tester').value.trim();
+  if(!tester){ toast('Enter who did the test'); $('#f_tester').focus(); return; }
+  const iso=$('#isoChk'); if(iso && !iso.checked && !F.na){ toast('Confirm the drive / EC electronics are isolated'); iso.focus(); return; }
+  const j=judge(F.a,F.sec,F.vals,F.na);
+  if(!j.result){ toast('Nothing entered yet'); return; }
+  const vals={}; Object.entries(F.vals).forEach(([k,v])=>{ if(v!==''&&v!=null) vals[k]=String(v); });
+  const rec={job:S.job,asset:F.a.tag,section:F.sec.key,cable:F.sec.cable!=null?((F.a.cables||[])[F.sec.cable]||{}).no||'':'',
+    values:vals,result:j.result,why:j.why,testerName:tester,licence:S.profile.licence||'',
+    instrument:$('#f_inst')?$('#f_inst').value.trim():'',serial:$('#f_ser')?$('#f_ser').value.trim():'',calDue:S.profile.calDue||'',
+    testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),isolated:iso?iso.checked:null};
+  btn.disabled=true; btn.textContent='Saving…';
+  try{
+    await S.db.collection('tests').add(rec);
+    toast(j.result==='fail'?'Saved – FAIL recorded':'Saved'); S.view='asset'; render();
+  }catch(e){
+    btn.disabled=false; btn.textContent='Save test';
+    if(e.code==='invalid_argument'){ toast('You do not have permission to save – ask James.'); }
+    else if(e.code==='quota_exceeded') toast('Database is full – tell James.');
+    else toast('Could not save ('+e.code+'). Try again.');
+  }
+}
+
+/* ---------------- Clicks ---------------- */
+function onClick(e){
+  const ph=e.target.closest('img[data-photo]'); if(ph && !e.target.closest('#dform')){ viewPhoto(ph.dataset.photo); return; }
+  const b=e.target.closest('[data-act]'); if(!b) return;
+  const act=b.dataset.act, v=b.dataset.v;
+  if(act==='open'){S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
+  else if(act==='home'){S.view='home';render();}
+  else if(act==='back'){S.view='asset';render();window.scrollTo(0,0);}
+  else if(act==='sec'){S.section=v;S.view='form';render();window.scrollTo(0,0);}
+  else if(act==='group'){S.group=v;render();}
+  else if(act==='status'){S.status=v;render();}
+  else if(act==='seg'){ const f=b.dataset.f; F.vals[f]= F.vals[f]===v?'':v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===F.vals[f])); updateResult(); }
+  else if(act==='fillIR'){ const v='>'+irMax(); document.querySelectorAll('input[data-t="ir"]').forEach(i=>{i.value=v;F.vals[i.dataset.f]=v;markInput(i);}); updateResult(); }
+  else if(act==='fillCont'){ document.querySelectorAll('input[data-t="ohm"]').forEach(i=>{i.value='OK';F.vals[i.dataset.f]='OK';markInput(i);}); updateResult(); }
+  else if(act==='allY'){ F.fields.filter(f=>f.type==='ynna').forEach(f=>F.vals[f.id]='Y'); document.querySelectorAll('.checks .seg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v==='Y')); updateResult(); }
+  else if(act==='pdfOne') makePdf([S.assets[S.asset]]);
+  else if(act==='pdfList') makePdf(filteredAssets());
+  else if(act==='csv') exportCsv();
+  else if(act==='import') openImport();
+  else if(act==='addDev') openDevice(null);
+  else if(act==='editDev') openDevice(S.asset);
+  else if(act==='profile') openProfile();
+  else if(act==='void') voidTest(v,b);
+  else if(act==='close') closeModal();
+  else if(act==='copyLink'){ try{ navigator.clipboard.writeText(APP_URL).then(()=>toast('Link copied – paste it into Chrome'),()=>toast(APP_URL)); }catch(_){ toast(APP_URL); } }
+}
+document.addEventListener('input',e=>{ if(e.target.id==='q'){ S.q=e.target.value; const pos=e.target.selectionStart; render(); const q=$('#q'); if(q){q.focus(); try{q.setSelectionRange(pos,pos);}catch(_){}} } });
+
+async function voidTest(id,b){
+  if(b.dataset.confirm!=='1'){ b.dataset.confirm='1'; b.textContent='Tap again to void'; setTimeout(()=>{ if(b.isConnected){b.dataset.confirm='';b.textContent='Void';} },4000); return; }
+  try{ await S.db.doc('tests/'+id).update({voided:true,voidedAt:new Date().toISOString()}); toast('Record voided'); }catch(e){ toast('Could not void ('+e.code+')'); }
+}
+
+/* ---------------- Modals: profile, job, import ---------------- */
+function modal(html){ $('#layer').innerHTML=`<div class="modal" data-act="bg"><div class="card" role="dialog" aria-modal="true">${html}</div></div>`; }
+function closeModal(){ $('#layer').innerHTML=''; }
+document.getElementById('layer').addEventListener('click',e=>{ if(e.target.classList.contains('modal')) closeModal(); });
+function openProfile(){
+  const P=S.profile;
+  modal(`<h2>My details</h2><p class="hint">Saved to your account only and filled in on every test you record. Set the max reading to the last value your tester shows before infinity (e.g. 50 for an old Kyoritsu) – the quick-fill button then enters &gt;50.</p>
+  <form id="pform" class="test">
+   <div class="fgrid">
+    <div class="field"><label for="p_name">Name</label><input id="p_name" value="${esc(P.name||'')}"></div>
+    <div class="field"><label for="p_lic">EWRB registration no.</label><input id="p_lic" value="${esc(P.licence||'')}"></div>
+    <div class="field"><label for="p_inst">Test instrument</label><input id="p_inst" placeholder="e.g. Fluke 1664 FC" value="${esc(P.instrument||'')}"></div>
+    <div class="field"><label for="p_ser">Instrument serial</label><input id="p_ser" value="${esc(P.serial||'')}"></div>
+    <div class="field"><label for="p_cal">Calibration due</label><input id="p_cal" type="date" value="${esc(P.calDue||'')}"></div>
+    <div class="field"><label for="p_irmax">Insulation tester max reading (MΩ)</label><input id="p_irmax" inputmode="decimal" placeholder="999" value="${esc(P.irMax||'')}"></div>
+   </div>
+   <div class="actions"><button class="btn primary" type="submit" ${S.uid?'':'disabled'}>Save</button><button class="btn" type="button" data-act="close">Cancel</button></div>
+   <p class="hint">Signed in as ${esc(S.email||'')}. <button class="btn" type="button" id="signOut" style="padding:4px 10px">Sign out</button></p>
+  </form>`);
+  $('#signOut').addEventListener('click',async()=>{ await sb.auth.signOut(); });
+  $('#pform').addEventListener('submit',async e=>{ e.preventDefault();
+    const p={name:$('#p_name').value.trim(),licence:$('#p_lic').value.trim(),instrument:$('#p_inst').value.trim(),serial:$('#p_ser').value.trim(),calDue:$('#p_cal').value,irMax:$('#p_irmax').value.replace(/[^0-9.]/g,'')};
+    try{ await S.db.doc('data/users/'+S.uid+'/profile').set(p); S.profile=p; closeModal(); toast('Details saved'); render(); }
+    catch(err){ toast('Could not save ('+err.code+')'); }
+  });
+}
+function openJobModal(){
+  modal(`<h2>New job</h2><form id="jform" class="test"><div class="fgrid">
+   <div class="field"><label for="j_id">Job no.</label><input id="j_id" placeholder="J41334"></div>
+   <div class="field" style="grid-column:span 2"><label for="j_name">Job name</label><input id="j_name"></div>
+   <div class="field"><label for="j_client">Client</label><input id="j_client"></div>
+   <div class="field"><label for="j_loc">Location</label><input id="j_loc"></div></div>
+   <div class="actions"><button class="btn primary" type="submit">Create</button><button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
+  $('#jform').addEventListener('submit',async e=>{ e.preventDefault();
+    const id=$('#j_id').value.trim().replace(/[^A-Za-z0-9_\-]/g,''); if(!id){toast('Enter a job no.');return;}
+    try{ await S.db.doc('jobs/'+id).set({name:$('#j_name').value.trim()||id,client:$('#j_client').value.trim(),location:$('#j_loc').value.trim()}); closeModal(); switchJob(id); S.view='home'; render(); toast('Job created – now import its assets'); }
+    catch(err){ toast('Could not create ('+err.code+')'); }
+  });
+}
+const CSV_HEAD=['tag','description','area','group','type','sheet','make','model','kw','flc','starter','protection','fed_from','cables','notes'];
+function openImport(){
+  modal(`<h2>Import / update assets for ${esc(S.job)}</h2>
+  <p class="hint">Paste CSV with this header row. <b>sheet</b> is MCTS (motor) or CTS (cable). <b>cables</b> is one or more <span class="tag">cable no~type~size~length</span> joined with <span class="tag">;</span>. Rows with an existing tag are updated; nothing is deleted.</p>
+  <div class="field"><label for="csvIn">CSV</label><textarea id="csvIn" class="csv">${esc(CSV_HEAD.join(','))}
+B02PP05,Example Pump 5,Cooling Water,Other Assets,Pump + Motor,MCTS,Grundfos,NBG 150,30,50.4,VSD,63A,B02SC05,B02SC05-B02PP05~VSD Flex~10~40,</textarea></div>
+  <div class="actions"><button class="btn primary" type="button" id="doImport">Import</button><button class="btn" type="button" id="tplBtn">Download current assets CSV</button><button class="btn" type="button" data-act="close">Close</button></div>
+  <p class="hint" id="impMsg"></p>`);
+  $('#tplBtn').addEventListener('click',()=>{
+    const rows=Object.values(S.assets).map(a=>[a.tag,a.desc,a.area,a.group,a.type,a.sheet,a.make,a.model,a.kw,a.flc,a.starter,a.prot,a.fed,(a.cables||[]).map(c=>[c.no,c.type,c.size,c.len].join('~')).join(';'),(a.notes||[]).join(' | ')]);
+    download(S.job+' assets.csv',toCsv([CSV_HEAD,...rows]));
+  });
+  $('#doImport').addEventListener('click',async()=>{
+    const rows=parseCsv($('#csvIn').value); const h=rows.shift().map(x=>x.trim().toLowerCase());
+    const ix=k=>h.indexOf(k); if(ix('tag')<0){ $('#impMsg').textContent='Header row must include tag.'; return; }
+    let n=0, base=Object.keys(S.assets).length;
+    for(const r of rows){ const g=k=>ix(k)>=0?(r[ix(k)]||'').trim():''; const tag=g('tag'); if(!tag) continue;
+      const cables=g('cables')?g('cables').split(';').map(s=>{const [no,type,size,len]=s.split('~');return{no:(no||'').trim(),type:(type||'').trim(),size:(size||'').trim(),len:(len||'').trim()};}).filter(c=>c.no||c.type):[];
+      const prev=S.assets[tag]||{};
+      const doc={job:S.job,tag,desc:g('description'),area:g('area'),group:g('group')||'Other Assets',type:g('type'),sheet:/MCTS|MOTOR/i.test(g('sheet'))?'MCTS':'CTS',
+        make:g('make'),model:g('model'),kw:g('kw'),flc:g('flc'),starter:g('starter'),prot:g('protection'),fed:g('fed_from'),cables,notes:g('notes')?g('notes').split(' | '):[],order:prev.order??(base+n)};
+      try{ await S.db.doc('assets/'+idOf(S.job,tag)).set(doc); n++; $('#impMsg').textContent='Imported '+n+'…'; }
+      catch(err){ $('#impMsg').textContent='Stopped at '+tag+': '+err.code; return; }
+    }
+    $('#impMsg').textContent='Done – '+n+' assets imported or updated.';
+  });
+}
+async function shrinkImage(file,max=1600,q=0.82){
+  try{
+    const url=URL.createObjectURL(file);
+    const img=await new Promise((res,rej)=>{const i=new Image(); i.onload=()=>res(i); i.onerror=rej; i.src=url;});
+    const k=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*k); c.height=Math.round(img.naturalHeight*k);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height); URL.revokeObjectURL(url);
+    return await new Promise(r=>c.toBlob(b=>r(b||file),'image/jpeg',q));
+  }catch(e){ return file; }
+}
+async function readNameplate(blob){
+  if(!S.sample||!S.canImg) throw {code:'images_unavailable'};
+  const prompt='This photo shows an equipment nameplate (electric motor, pump, fan, compressor, heater, drive or valve) on an industrial refrigeration site in New Zealand. '+
+   'Read it and reply with only one JSON object with these keys (use "" when a value is not on the plate; never guess): '+
+   '{"make":"","model":"","serial":"","kw":"number as text, convert HP to kW","flc":"full-load amps at the supply voltage used in NZ (400V 3-phase or 230V 1-phase) as text","rpm":"","volts":"e.g. 400 or 230","phases":"1 or 3","hz":"","connection":"Star, Delta or empty","frame":"","ip":"","notes":"anything unclear, e.g. dual-voltage ratings"}';
+  return await S.sample.json(prompt,{images:[blob],modelTier:'default'});
+}
+function viewPhoto(id){ modal(`<img class="bigphoto" src="${photoSrc(id)}" data-photo="${esc(id)}" alt="Device photo"><div class="actions" style="margin-top:10px"><button class="btn" type="button" data-act="close">Close</button></div>`); }
+const APP_URL='https://claude.ai/artifact/JzQPW8L2FQHkHzkMdrP2n8';
+const camHint=()=>''; const _oldCamHint=()=>`<p class="hint">Camera not opening? The Claude phone app can't open the camera – <a href="${APP_URL}" target="_blank" rel="noopener">open this page in your browser</a> (Chrome / Safari) and add it to your home screen. <button class="btn" type="button" data-act="copyLink" style="padding:4px 10px">Copy link</button></p>`;
+const photoStrip=(ids,editable)=>(ids||[]).map((id,i)=>`<figure><img src="${photoSrc(id)}" alt="Device photo ${i+1}" data-photo="${esc(id)}" loading="lazy" onerror="this.style.opacity=.3">${editable?`<button class="rm" type="button" data-rmphoto="${i}" aria-label="Remove photo ${i+1}">✕</button>`:''}</figure>`).join('');
+const DEV_TYPES=['Compressor','Pump + Motor','Fan','Motor','Heater','VSD','Control Panel','Solenoid Valve','Other'];
+const MOTOR_TYPES=['Compressor','Pump + Motor','Fan','Motor'];
+/* Which device fields show for each type. id -> [label, kind, options/placeholder] */
+const DEV_FIELDS={
+  make:['Make','text'], model:['Model / spec','text'],
+  kw:['kW','num'], flc:['FLC (A)','num'], rpm:['RPM','num'],
+  volts:['Voltage','seg',['230V','400V']], phases:['Phases','seg',['1','3']],
+  starter:['Starter','seg',['DOL','VSD','Star-Delta','Soft start','EC / integral']],
+  drive:['Drive tag (VSD)','text','B02SC01'],
+  prot:['Protection','text','16A C MCB / 20A RCBO / 80A MCCB'], ol:['Overload setting (A)','num'],
+  fed:['Fed from','text','CP07 / MSB A12'],
+  driven:['Drives (motor tag)','text','B02PP03'], rated:['Drive rated current (A)','num'],
+  coil:['Coil voltage','seg',['24VAC','24VDC','230VAC']],
+  rating:['Supply rating (A)','num'], ipr:['IP rating','text','IP66'],
+};
+const TYPE_FIELDS={
+  'Compressor':['make','model','kw','flc','rpm','volts','starter','drive','prot','ol','fed'],
+  'Pump + Motor':['make','model','kw','flc','rpm','volts','starter','drive','prot','ol','fed'],
+  'Fan':['make','model','kw','flc','volts','phases','starter','drive','prot','fed'],
+  'Motor':['make','model','kw','flc','rpm','volts','phases','starter','drive','prot','ol','fed'],
+  'Heater':['make','model','kw','flc','volts','phases','prot','fed'],
+  'VSD':['make','model','kw','rated','driven','prot','fed'],
+  'Control Panel':['make','model','rating','volts','phases','prot','fed','ipr'],
+  'Solenoid Valve':['make','model','coil','prot','fed'],
+  'Other':['make','model','kw','flc','volts','phases','prot','fed'],
+};
+const TYPE_CABLE={'Compressor':'VSD Flex','Pump + Motor':'PVC/PVC 3C+E','Fan':'PVC/PVC 3C+E','Motor':'PVC/PVC 3C+E','Heater':'PVC/PVC 2C+E','VSD':'PVC/PVC 3C+E','Control Panel':'PVC/PVC 4C+E','Solenoid Valve':'PVC/PVC Flex 2C+E','Other':''};
+const CABLE_TYPES=['PVC/PVC 2C+E','PVC/PVC 3C+E','PVC/PVC 4C+E','PVC/PVC Flex 2C+E','VSD Flex','XLPE 3C+E','XLPE 4C+E','SWA 4C+E'];
+function openDevice(tag){
+  const a=tag?S.assets[tag]:{tag:'',desc:'',area:'',group:'',type:'Pump + Motor',sheet:'MCTS',make:'',model:'',kw:'',flc:'',starter:'',prot:'',fed:'',cables:[{no:'',type:'',size:'',len:''}],notes:[]};
+  let cables=JSON.parse(JSON.stringify(a.cables&&a.cables.length?a.cables:[{no:'',type:'',size:'',len:''}]));
+  let sheet=a.sheet||'CTS';
+  const photos=[...(a.photos||[])]; const origPhotos=[...photos]; let uploading=0;
+  // working values for the type-specific fields (kept when the type changes)
+  const V={make:a.make,model:a.model,kw:a.kw,flc:a.flc,rpm:a.rpm,volts:a.volts,phases:a.phases,ol:a.ol,fed:a.fed,prot:a.prot,
+    driven:a.driven,rated:a.rated,coil:a.coil,rating:a.rating,ipr:a.ipr,
+    starter:(a.starter||'').replace(/\s*\(.*\)/,'').replace(/^EC.*/,'EC / integral')||'', drive:a.drive||((a.starter||'').match(/\((B\d\d\w+)\)/)||[])[1]||''};
+  let dtype=DEV_TYPES.includes(a.type)?a.type:'Other';
+  const typeFieldsHtml=()=>{
+    const ids=TYPE_FIELDS[dtype].filter(id=>id!=='drive'||V.starter==='VSD');
+    return ids.map(id=>{ const [label,kind,opt]=DEV_FIELDS[id];
+      if(kind==='seg') return `<div class="field" style="grid-column:span 2"><label>${label}</label><div class="seg" data-dseg="${id}">${opt.map(o=>`<button type="button" class="o" data-v="${esc(o)}" aria-pressed="${V[id]===o}">${esc(o)}</button>`).join('')}</div></div>`;
+      return `<div class="field"><label for="dv_${id}">${label}</label><input id="dv_${id}" data-dv="${id}" value="${esc(V[id]||'')}" ${kind==='num'?'inputmode="decimal"':''} ${opt?`placeholder="${esc(opt)}"`:''}></div>`; }).join('');
+  };
+  const groups=[...new Set(Object.values(S.assets).map(x=>x.group).filter(Boolean))], areas=[...new Set(Object.values(S.assets).map(x=>x.area).filter(Boolean))];
+  const inp=(id,label,v,extra='')=>`<div class="field"><label for="${id}">${label}</label><input id="${id}" value="${esc(v||'')}" ${extra}></div>`;
+  const cableRows=()=>cables.map((c,i)=>`<div class="fgrid" style="grid-template-columns:2fr 2fr 1fr 1fr auto;align-items:end">
+      ${inp('dc_no'+i,'Cable no.',c.no)}${inp('dc_ty'+i,'Type',c.type,'list="cabletypes"')}${inp('dc_sz'+i,'mm²',c.size,'inputmode="decimal"')}${inp('dc_ln'+i,'Length m',c.len,'inputmode="decimal"')}
+      <button class="btn danger" type="button" data-rm="${i}" aria-label="Remove cable ${i+1}">✕</button></div>`).join('');
+  modal(`<h2>${tag?'Edit '+esc(tag):'Add device'}</h2>
+  <form id="dform" class="test">
+   <datalist id="cabletypes">${CABLE_TYPES.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
+   <datalist id="grouplist">${groups.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
+   <datalist id="arealist">${areas.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
+   <div class="fgrid">
+    ${inp('d_tag','Asset tag',a.tag,tag?'readonly':'placeholder="e.g. B36FN07" autocapitalize="characters"')}
+    <div class="field" style="grid-column:span 2"><label for="d_desc">Description</label><input id="d_desc" value="${esc(a.desc)}"></div>
+    <div class="field"><label for="d_type">Type</label><select id="d_type">${DEV_TYPES.map(t=>`<option ${t===a.type?'selected':''}>${t}</option>`).join('')}${DEV_TYPES.includes(a.type)||!a.type?'':`<option selected>${esc(a.type)}</option>`}</select></div>
+    ${inp('d_area','Area',a.area,'list="arealist"')}${inp('d_group','Group',a.group,'list="grouplist"')}
+   </div>
+   <div class="field"><label>Test sheet</label><div class="seg" id="d_sheet"><button type="button" class="o" data-v="MCTS" aria-pressed="${sheet==='MCTS'}">Motor &amp; Cable</button><button type="button" class="o" data-v="CTS" aria-pressed="${sheet==='CTS'}">Cable only</button></div></div>
+   <h3 id="dtypeh">${esc(dtype)} details</h3>
+   <div class="fgrid" id="dtypef">${typeFieldsHtml()}</div>
+   <h3>Photos</h3>
+   <div class="photos" id="dphotos">${photoStrip(photos,true)}</div>
+   ${S.assetsCap?`<div class="actions"><label class="camlabel primary" for="d_cam">📷 Take photo<input id="d_cam" type="file" accept="image/*" capture="environment"></label>
+     ${S.canImg?'<label class="camlabel" for="d_np">🔎 Read nameplate<input id="d_np" type="file" accept="image/*" capture="environment"></label>':''}
+     <label class="camlabel" for="d_pick">Choose from phone<input id="d_pick" type="file" accept="image/*" multiple></label><span class="hint" id="dphmsg" style="align-self:center"></span></div>${camHint()}`
+     :'<p class="hint">Sign in to add photos.</p>'}
+   <h3>Cables</h3><div id="dcables" style="display:grid;gap:8px">${cableRows()}</div>
+   <div class="actions"><button class="btn" type="button" id="addCable">+ Add cable</button></div>
+   <div class="field"><label for="d_notes">Notes (one per line)</label><textarea id="d_notes" rows="2">${esc((a.notes||[]).join('\n'))}</textarea></div>
+   ${tag?'<p class="hint">The tag can\'t be changed because test results are saved against it. To rename, add a new device and delete this one.</p>':''}
+   <div class="actions"><button class="btn primary" type="submit">${tag?'Save changes':'Add device'}</button><button class="btn" type="button" data-act="close">Cancel</button>
+   ${tag?'<button class="btn danger" type="button" id="delDev">Delete device</button>':''}</div>
+   <p class="hint" id="dmsg"></p>
+  </form>`);
+  const readCables=()=>{ cables=cables.map((c,i)=>({no:$('#dc_no'+i).value.trim(),type:$('#dc_ty'+i).value.trim(),size:$('#dc_sz'+i).value.trim(),len:$('#dc_ln'+i).value.trim()})); };
+  const redraw=()=>{ $('#dcables').innerHTML=cableRows(); };
+  $('#addCable').addEventListener('click',()=>{ readCables(); cables.push({no:'',type:'',size:'',len:''}); redraw(); });
+  $('#dcables').addEventListener('click',e=>{ const b=e.target.closest('[data-rm]'); if(!b) return; readCables(); cables.splice(+b.dataset.rm,1); redraw(); });
+  $('#d_sheet').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b) return; sheet=b.dataset.v; $('#d_sheet').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===sheet)); });
+  const setSheet=v=>{ sheet=v; $('#d_sheet').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===sheet)); };
+  const redrawType=()=>{ $('#dtypef').innerHTML=typeFieldsHtml(); $('#dtypeh').textContent=dtype+' details'; };
+  const dlg=$('#dform');
+  dlg.addEventListener('input',e=>{ const id=e.target.dataset&&e.target.dataset.dv; if(id) V[id]=e.target.value; });
+  dlg.addEventListener('click',e=>{ const b=e.target.closest('[data-dseg] button'); if(!b) return; const id=b.parentElement.dataset.dseg;
+    V[id]= V[id]===b.dataset.v?'':b.dataset.v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===V[id]));
+    if(id==='starter') redrawType();
+    if(id==='starter'&&!tag){ const defs=Object.values(TYPE_CABLE); cables.forEach((c,i)=>{ const el=$('#dc_ty'+i); if(el&&(!el.value||defs.includes(el.value)||el.value==='VSD Flex')) el.value= V.starter==='VSD'?'VSD Flex':(TYPE_CABLE[dtype]||''); }); }
+  });
+  $('#d_type').addEventListener('change',e=>{ const old=dtype; dtype=e.target.value; redrawType();
+    if(!tag){ setSheet(MOTOR_TYPES.includes(dtype)?'MCTS':'CTS');
+      if(dtype==='Solenoid Valve'&&!V.coil) V.coil='230VAC';
+      if(dtype==='Heater'&&!V.phases) V.phases='1';
+      if(MOTOR_TYPES.includes(dtype)&&!V.volts) V.volts='400V';
+      redrawType(); readCables(); cables.forEach(c=>{ if(!c.type||c.type===TYPE_CABLE[old]||c.type==='VSD Flex') c.type=(MOTOR_TYPES.includes(dtype)&&V.starter==='VSD')?'VSD Flex':(TYPE_CABLE[dtype]||''); }); redraw(); }
+  });
+  const drawPhotos=()=>{ $('#dphotos').innerHTML=photoStrip(photos,true); };
+  $('#dphotos').addEventListener('click',e=>{ const b=e.target.closest('[data-rmphoto]'); if(b){ photos.splice(+b.dataset.rmphoto,1); drawPhotos(); } });
+  const onFiles=async e=>{ const files=[...(e.target.files||[])]; e.target.value=''; if(!files.length||!S.assetsCap) return;
+    const msg=$('#dphmsg'); const btn=dlg.querySelector('button[type=submit]');
+    for(const f of files){ uploading++; btn.disabled=true; msg.textContent='Uploading photo…';
+      try{ const blob=await shrinkImage(f); const r=await S.assetsCap.upload(blob,{type:blob.type==='image/jpeg'?'image/jpeg':(f.type||'image/jpeg')}); photos.push(r.id); drawPhotos(); msg.textContent='Photo added'; }
+      catch(err){ msg.textContent= err.code==='too_large'?'Photo too large':err.code==='quota_or_state'?'Photo storage is full':'Upload failed ('+(err.code||'error')+')'; }
+      uploading--; if(!uploading) btn.disabled=false; }
+  };
+  if($('#d_cam')) $('#d_cam').addEventListener('change',onFiles);
+  if($('#d_np')) $('#d_np').addEventListener('change',async e=>{ const f=(e.target.files||[])[0]; e.target.value=''; if(!f) return;
+    const msg=$('#dphmsg'); msg.textContent='Reading nameplate… (can take ~20 s)';
+    const blob=await shrinkImage(f);
+    if(S.assetsCap){ S.assetsCap.upload(blob,{type:'image/jpeg'}).then(r=>{ photos.push(r.id); drawPhotos(); }).catch(()=>{}); }
+    try{ const d=await readNameplate(blob); let n=0;
+      const put=(k,v)=>{ v=String(v??'').trim(); if(v){ V[k]=v; n++; } };
+      put('make',d.make); put('model',[d.model,d.serial&&('S/N '+d.serial),d.frame&&('Frame '+d.frame)].filter(Boolean).join(', ')); put('kw',d.kw); put('flc',d.flc); put('rpm',d.rpm);
+      if(d.volts) put('volts',/23\d/.test(d.volts)?'230V':/4\d\d/.test(d.volts)?'400V':d.volts);
+      if(d.phases) put('phases',String(d.phases).includes('1')?'1':'3');
+      if(d.ip) put('ipr',d.ip);
+      redrawType(); msg.textContent= n? 'Filled '+n+' fields from the nameplate – check them'+(d.notes?' ('+d.notes+')':''):'Could not read the plate – try a closer, square-on photo';
+    }catch(err){ msg.textContent= err.code==='not_granted'?'Allow Claude access to read nameplates':err.code==='invalid_json'?'Could not read the plate – try again':'Nameplate read failed ('+(err.code||'error')+')'; }
+  });
+  if($('#d_pick')) $('#d_pick').addEventListener('change',onFiles);
+  const suggestCable=()=>{ readCables(); const t=$('#d_tag').value.trim().toUpperCase(); const src=(V.starter==='VSD'&&V.drive)?V.drive:(V.fed||'').split(/[ ,]/)[0];
+    cables.forEach((c,i)=>{ const el=$('#dc_no'+i); if(el&&!el.value&&t&&src) el.placeholder=src+'-'+t; }); };
+  dlg.addEventListener('focusout',e=>{ if(['d_tag','dv_fed','dv_drive'].includes(e.target.id)) suggestCable(); });
+  dlg.addEventListener('focusin',e=>{ if(/^dc_no\d+$/.test(e.target.id) && !e.target.value && e.target.placeholder) { e.target.value=e.target.placeholder; } });
+  if(!tag){ cables.forEach(c=>{ if(!c.type) c.type=TYPE_CABLE[dtype]||''; }); redraw(); }
+  if($('#delDev')) $('#delDev').addEventListener('click',async e=>{
+    const b=e.target; const n=S.tests.filter(t=>t.asset===tag&&!t.voided).length;
+    if(b.dataset.confirm!=='1'){ b.dataset.confirm='1'; b.textContent=n?`Delete? ${n} saved test(s) will be hidden`:'Tap again to delete'; return; }
+    try{ await S.db.doc('assets/'+idOf(S.job,tag)).delete(); closeModal(); S.view='home'; render(); toast('Device deleted'); }catch(err){ $('#dmsg').textContent='Could not delete ('+err.code+')'; }
+  });
+  $('#dform').addEventListener('submit',async e=>{ e.preventDefault(); readCables();
+    const t=$('#d_tag').value.trim().toUpperCase();
+    if(!t){ $('#dmsg').textContent='Enter an asset tag.'; return; }
+    if(!tag && S.assets[t]){ $('#dmsg').textContent=t+' already exists – open it and use Edit device.'; return; }
+    const maxOrder=Math.max(-1,...Object.values(S.assets).map(x=>x.order??0));
+    const doc={job:S.job,tag:t,desc:$('#d_desc').value.trim(),area:$('#d_area').value.trim(),group:$('#d_group').value.trim()||'Other',type:$('#d_type').value,sheet,
+      ...(()=>{ const keep=TYPE_FIELDS[dtype]; const o={}; Object.keys(DEV_FIELDS).forEach(k=>{ o[k]= keep.includes(k)? String(V[k]??'').trim() : ''; });
+        o.starter = !MOTOR_TYPES.includes(dtype)? (dtype==='VSD'?'VSD':'') : V.starter==='VSD'? 'VSD'+(V.drive?' ('+V.drive.trim().toUpperCase()+')':'') : V.starter==='EC / integral'?'EC':(V.starter||'');
+        if(dtype==='VSD'&&!o.flc) o.flc=o.rated;
+        delete o.drive; return o; })(),
+      cables:cables.filter(c=>c.no||c.type||c.size),
+      notes:$('#d_notes').value.split('\n').map(x=>x.trim()).filter(Boolean),photos,order:a.order??(maxOrder+1)};
+    if(uploading){ $('#dmsg').textContent='Wait for the photo to finish uploading.'; return; }
+    try{ await S.db.doc('assets/'+idOf(S.job,t)).set(doc);
+      origPhotos.filter(id=>!photos.includes(id)).forEach(id=>{ try{ S.assetsCap&&S.assetsCap.delete(id).catch(()=>{}); }catch(_){} });
+      closeModal(); S.asset=t; S.view='asset'; render(); toast(tag?'Device updated':'Device added'); }
+    catch(err){ $('#dmsg').textContent='Could not save ('+err.code+')'+(err.code==='invalid_argument'?' – only admins can change devices.':''); }
+  });
+}
+function parseCsv(t){ const out=[];let row=[],cur='',q=false;
+  for(let i=0;i<t.length;i++){const ch=t[i];
+    if(q){ if(ch==='"'){ if(t[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=ch; }
+    else if(ch==='"') q=true; else if(ch===','){row.push(cur);cur='';} else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&t[i+1]==='\n')i++; row.push(cur);cur=''; if(row.some(x=>x!==''))out.push(row); row=[]; } else cur+=ch; }
+  row.push(cur); if(row.some(x=>x!==''))out.push(row); return out; }
+const toCsv=rows=>rows.map(r=>r.map(v=>{v=String(v??'');return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(',')).join('\r\n');
+async function download(name,data){
+  if(!S.dl){ toast('Downloads are not available in this view'); return; }
+  try{ await S.dl.save({filename:name,data}); }
+  catch(e){ if(e.code!=='declined') toast('Download failed ('+e.code+')'); }
+}
+function exportCsv(){
+  const head=['job','asset','description','test','cable','result','test_date','tested_by','registration','instrument','serial','values','notes','saved_at'];
+  const rows=[];
+  Object.values(S.assets).forEach(a=>sectionsFor(a).forEach(s=>{ const t=S.latest[a.tag+'|'+s.key];
+    rows.push([S.job,a.tag,a.desc,s.group+' – '+s.title,t?t.cable:'',t?t.result:'not done',t?t.testDate:'',t?t.testerName:'',t?t.licence:'',t?t.instrument:'',t?t.serial:'',t?Object.entries(t.values||{}).map(([k,v])=>k+'='+v).join('; '):'',t?t.notes:'',t?t.at:'']); }));
+  download(S.job+' test results '+today()+'.csv',toCsv([head,...rows]));
+}
+
+/* ---------------- PDF test sheets ---------------- */
+function pdfText(s){ return String(s??'').replace(/Δ/g,'d').replace(/Ω/g,'ohm').replace(/MΩ/g,'Mohm').replace(/²/g,'2').replace(/[–—]/g,'-').replace(/[^\x20-\x7E -ÿ]/g,''); }
+function makePdf(assets){
+  if(!window.jspdf){ toast('PDF library did not load – check signal and reload'); return; }
+  const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'mm',format:'a4'});
+  const job=S.jobs[S.job]||{}; const W=210,M=12; let y=0, first=true;
+  const line=(x1,y1,x2,y2)=>doc.line(x1,y1,x2,y2);
+  function header(a,title,sub){
+    if(!first) doc.addPage(); first=false; y=M;
+    doc.setFillColor(36,65,95); doc.rect(M,y,W-2*M,14,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text(pdfText(title),M+3,y+6);
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.text('NZ Electrical Solutions',W-M-3,y+5,{align:'right'}); doc.text(pdfText(sub),M+3,y+11);
+    doc.setTextColor(0); y+=18;
+    boxRow([['Client',job.client||''],['Location',job.location||''],['Job',S.job+(job.name?' - '+job.name:'')]],[45,55,86]);
+    boxRow([['Asset / Plant item',a.tag],['Description',a.desc],['Area',a.area||'']],[45,95,46]);
+  }
+  function boxRow(cells,widths,h=10){
+    let x=M; ensure(h);
+    cells.forEach(([k,v],i)=>{ const w=widths[i]; doc.setDrawColor(150); doc.rect(x,y,w,h);
+      doc.setFontSize(6.5); doc.setTextColor(90); doc.text(doc.splitTextToSize(pdfText(k).toUpperCase(),w-3)[0],x+1.5,y+3);
+      doc.setFontSize(9); doc.setTextColor(0); doc.text(doc.splitTextToSize(pdfText(v),w-3).slice(0,2),x+1.5,y+7); x+=w; });
+    y+=h;
+  }
+  function ensure(h){ if(y+h>285){ doc.addPage(); y=M; } }
+  function secTitle(t,rec){
+    ensure(12); y+=3; doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text(pdfText(t),M,y+4);
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(80);
+    const r=rec? (rec.result==='na'?'N/A':(rec.result||'').toUpperCase().replace('REC','RECORDED'))+'   '+pdfText(rec.testerName||'')+(rec.licence?' ('+rec.licence+')':'')+'   '+(rec.testDate||'')+(rec.instrument?'   '+pdfText(rec.instrument+' '+(rec.serial||'')):''):'NOT TESTED';
+    if(rec&&rec.result==='fail') doc.setTextColor(198,47,47); else if(!rec) doc.setTextColor(184,110,0);
+    doc.text(r,W-M,y+4,{align:'right'}); doc.setTextColor(0); y+=6;
+  }
+  function grid(a,sec,rec,cols){
+    const f=fieldsFor(a,sec).filter(x=>x.type!=='ynna'); if(!f.length) return;
+    const unit=x=>({ir:' Mohm',ohm:' ohm',z:' ohm',ms:' ms',amp:' A'})[x.type]||'';
+    const w=(W-2*M)/cols; let i=0;
+    for(;i<f.length;i+=cols){ const row=f.slice(i,i+cols).map(x=>[x.label+(unit(x)?' ('+unit(x).trim()+')':''), rec&&rec.values?rec.values[x.id]||'':'']); boxRow(row,row.map(()=>w),9); }
+  }
+  function checks(a,sec,rec){
+    const f=fieldsFor(a,sec).filter(x=>x.type==='ynna'); if(!f.length) return;
+    const half=Math.ceil(f.length/2), cw=(W-2*M)/2;
+    for(let i=0;i<half;i++){ ensure(6); [f[i],f[i+half]].forEach((x,j)=>{ if(!x) return; const X=M+j*cw;
+      doc.setDrawColor(170); doc.rect(X,y,cw,6); doc.setFontSize(8.5); doc.text(pdfText(x.label),X+1.5,y+4.2);
+      const v=rec&&rec.values?rec.values[x.id]||'':''; doc.setFont('helvetica','bold'); if(v==='N') doc.setTextColor(198,47,47);
+      doc.text(v==='Y'?'YES':v==='N'?'NO':v,X+cw-2,y+4.2,{align:'right'}); doc.setTextColor(0); doc.setFont('helvetica','normal'); }); y+=6; }
+  }
+  function notes(rec){ if(rec&&(rec.notes||rec.why)){ ensure(6); doc.setFontSize(7.5); doc.setTextColor(80); doc.text(doc.splitTextToSize(pdfText([rec.why,rec.notes].filter(Boolean).join(' - ')),W-2*M),M,y+3.5); doc.setTextColor(0); y+=5; } }
+  assets.forEach(a=>{
+    const secs=sectionsFor(a); const st=assetStatus(a); const L=k=>S.latest[a.tag+'|'+k];
+    const status = st.st==='done'?'COMPLETE':st.st==='fail'?'CONTAINS FAILED RESULT':'INCOMPLETE - '+st.done+' of '+st.total+' tests recorded';
+    header(a, isMotor(a)?'MOTOR AND CABLE TEST SHEET':'CABLE TEST SHEET', 'Ref '+(isMotor(a)?'NES-HSE-MCTS01':'NES-HSE-CTS01')+'   Status: '+status);
+    boxRow([['kW',a.kw||''],['FLC (A)',a.flc||''],['Starter',a.starter||''],['Protection',a.prot||''],['Fed from',a.fed||'']],[25,25,45,45,46]);
+    if(isMotor(a)){
+      secTitle('Motor nameplate',L('np')); grid(a,secs.find(s=>s.key==='np'),L('np'),5); notes(L('np'));
+      secTitle('Motor insulation resistance',L('mir')); grid(a,secs.find(s=>s.key==='mir'),L('mir'),7); notes(L('mir'));
+      secTitle('Winding resistance / motor earth',L('wr')); grid(a,secs.find(s=>s.key==='wr'),L('wr'),4); notes(L('wr'));
+      const rs=secs.find(s=>s.key==='rot'); secTitle('Rotation & connections',L('rot')); grid(a,rs,L('rot'),2); checks(a,rs,L('rot')); notes(L('rot'));
+      const ss=secs.find(s=>s.key==='st'); secTitle('Starter inspection',L('st')); grid(a,ss,L('st'),4); checks(a,ss,L('st')); notes(L('st'));
+    }
+    (a.cables&&a.cables.length?a.cables:[{}]).forEach((c,i)=>{
+      ensure(30); y+=2; doc.setFillColor(235,238,242); doc.rect(M,y,W-2*M,7,'F'); doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+      doc.text(pdfText('Cable '+(c.no||'(no cable no.)')+'   '+[c.type,c.size&&c.size+'mm2',c.len&&c.len+'m'].filter(Boolean).join(' / ')),M+2,y+4.8); doc.setFont('helvetica','normal'); y+=8;
+      const ct=secs.find(s=>s.key==='c'+i+'.ct'), ir=secs.find(s=>s.key==='c'+i+'.ir'), ck=secs.find(s=>s.key==='c'+i+'.ck');
+      secTitle('Cable continuity',L(ct.key)); grid(a,ct,L(ct.key),7); notes(L(ct.key));
+      secTitle('Cable insulation resistance',L(ir.key)); grid(a,ir,L(ir.key),7); notes(L(ir.key));
+      const po=secs.find(s=>s.key==='c'+i+'.pol'); secTitle(po.title,L(po.key)); checks(a,po,L(po.key)); notes(L(po.key));
+      const zs=secs.find(s=>s.key==='c'+i+'.zs'); if(zs){ secTitle('Earth fault-loop impedance',L(zs.key)); grid(a,zs,L(zs.key),5); notes(L(zs.key)); }
+      secTitle('Installation checks',L(ck.key)); checks(a,ck,L(ck.key)); notes(L(ck.key));
+    });
+    const rc=secs.find(s=>s.key==='rcd'); if(rc){ secTitle('RCD operation',L('rcd')); grid(a,rc,L('rcd'),4); checks(a,rc,L('rcd')); notes(L('rcd')); }
+    const fn=secs.find(s=>s.key==='fn'); secTitle('Functional test',L('fn')); grid(a,fn,L('fn'),4); checks(a,fn,L('fn')); notes(L('fn'));
+    ensure(22); y+=6; const testers=[...new Set(secs.map(s=>L(s.key)).filter(Boolean).map(t=>t.testerName+(t.licence?' ('+t.licence+')':'')))];
+    doc.setFontSize(8); doc.text(pdfText('Tested by: '+(testers.join(', ')||'-')),M,y); y+=8;
+    doc.text('Signed: ______________________________      Date: ______________',M,y); y+=6;
+    doc.setFontSize(6.5); doc.setTextColor(120); doc.text(pdfText('Generated '+new Date().toLocaleString('en-NZ')+' from NZES Test Recorder. Each section shows the latest saved result.'),M,y); doc.setTextColor(0);
+  });
+  const name=(assets.length===1?assets[0].tag:S.job+' '+(S.group!=='All'?S.group:'test sheets'))+' '+today()+'.pdf';
+  download(name.replace(/[^\w\-. ()]/g,'_'), doc.output('blob'));
+}
+
+init();
+</script>
+</body>
+</html>
