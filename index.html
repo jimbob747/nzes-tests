@@ -196,6 +196,20 @@ table.sum td.bad{color:var(--fail);font-weight:700} table.sum tr.click{cursor:po
 .dnotes{display:grid;gap:8px;border-left:3px solid var(--line);padding-left:10px;margin:4px 0}
 .tabbtn{white-space:nowrap;font-size:.95rem;padding-left:4px;padding-right:4px}
 @media (max-width:480px){.tabbtn{font-size:.8rem}}
+
+/* fast entry */
+.mpart{border-top:2px solid var(--line);padding-top:10px;display:grid;gap:10px}
+.mres{font-weight:700;font-size:.9rem;text-align:right}
+.mck summary{cursor:pointer;color:var(--muted);padding:6px 0}
+.banner.ok{border-color:var(--pass);color:var(--pass);font-weight:600}
+table.bulk input:not([type=checkbox]){width:4.6rem;padding:8px 6px;font:inherit;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
+table.bulk input[type=checkbox]{width:24px;height:24px}
+table.bulk td{vertical-align:middle;text-align:center} table.bulk td:nth-child(-n+2){text-align:left} table.bulk td.na{color:var(--muted)}
+table.bulk td.had small{display:block;color:var(--muted)} table.bulk td.bad small{display:block;color:var(--fail);font-weight:700}
+table.bulk input.bad{border-color:var(--fail);background:rgba(198,47,47,.12)} table.bulk input.good{border-color:var(--pass)} table.bulk input.warnc{border-color:var(--warn)}
+table.bulk th{position:sticky;top:0;background:var(--surface);font-size:.8rem}
+@media (max-width:1099px){ body:not(.office-on) .office{display:none!important} }
+@media (min-width:1100px){ .wide-hide{display:none} }
 </style>
 </head>
 <body>
@@ -622,14 +636,14 @@ function fieldsFor(a,sec){
     {id:'dev',label:'Protective device',type:'text',pre:a.prot},
     {id:'In',label:'Rating In (A)',type:'num',pre:parseProt(a.prot).In},
     {id:'curve',label:'Curve / type',type:'seg',opts:['B','C','D','MCCB','Fuse'],pre:parseProt(a.prot).curve},
-    {id:'method',label:'Method',type:'seg',opts:['Live','Dead'],pre:'Live'},
+    {id:'method',label:'Method',type:'seg',opts:['Live','Dead'],pre:LAST.method==='Dead'?'Dead':'Live'},
     {id:'zs',label:'Zs measured (live)',type:'z'},
     {id:'rph',label:'Active + earth loop resistance (dead)',type:'z'},
     {id:'zmax',label:'Max – leave blank to calculate',type:'z'},
     {id:'pfc',label:'PFC / PSCC (kA)',type:'num'}];
   if(k==='rcd') return [
-    {id:'ma',label:'Rated IΔn',type:'seg',opts:['10mA','30mA','100mA','300mA'],pre:'30mA'},
-    {id:'rtype',label:'RCD type',type:'seg',opts:['AC','A','F','B']},
+    {id:'ma',label:'Rated IΔn',type:'seg',opts:['10mA','30mA','100mA','300mA'],pre:((/\b(10|30|100|300)\s*mA/i.exec((a.rcd||'')+' '+(a.prot||''))||[])[1]||'30')+'mA'},
+    {id:'rtype',label:'RCD type',type:'seg',opts:['AC','A','F','B'],pre:LAST.rtype||''},
     {id:'t1',label:'Trip time at 1× IΔn',type:'ms',max:LIM().rcd1},
     {id:'t5',label:'Trip time at 5× IΔn',type:'ms',max:LIM().rcd5},
     {id:'half',label:'Does NOT trip at ½ × IΔn',type:'ynna'},
@@ -788,17 +802,20 @@ function render(){
   let body='';
   if(!S.db && !S.error) return;
   const hasA=S.db&&!S.error&&S.job&&S.loaded.a&&A(S.asset);
-  const split=WIDE()&&hasA&&(S.view==='asset'||S.view==='form');
+  const split=WIDE()&&hasA&&(S.view==='asset'||S.view==='form'||S.view==='multi');
   // Never rebuild a form that is being filled in (another phone saving a test used to wipe it)
-  if(S.view==='form'&&F&&$('#tform')&&hasA&&F.a.tag===S.asset&&F.sec.key===S.section&&!!$('#paneL')===split){ const pl=$('#paneL'); if(pl){ const st=pl.scrollTop; pl.innerHTML=leftHtml(); pl.scrollTop=st; markSel(); } netBanner(); return; }
+  if(S.view==='bulk'&&B&&$('#bform')){ netBanner(); return; }
+  if(((S.view==='form'&&F&&$('#tform')&&hasA&&F.a.tag===S.asset&&F.sec.key===S.section)||(S.view==='multi'&&M&&$('#mform')&&hasA&&M.a.tag===S.asset&&M.cable===(S.mcable||0)))&&!!$('#paneL')===split){ const pl=$('#paneL'); if(pl){ const st=pl.scrollTop; pl.innerHTML=leftHtml(); pl.scrollTop=st; markSel(); } netBanner(); return; }
   let cls='';
   if(!S.db || S.error) body='';
   else if(!S.job) body=`<div class="card"><h2>No jobs yet</h2><p class="hint">${S.canEdit?'Create a job from the job menu, then import its asset list.':'Nothing has been set up yet.'}</p></div>`;
   else if(!S.loaded.a) body=`<div class="card"><h2>Loading assets…</h2></div>`;
-  else if(split){ const right=S.view==='form'?viewForm(A(S.asset),S.section):viewAsset(A(S.asset)); const left=leftHtml();
+  else if(split){ const right=S.view==='form'?viewForm(A(S.asset),S.section):S.view==='multi'?viewMulti(A(S.asset)):viewAsset(A(S.asset)); const left=leftHtml();
     cls='wide'; body=`<div class="split${S.paneBoard?' b':''}"><div class="pane pl" id="paneL">${left}</div><div class="pane pr" id="paneR">${right}</div></div>`; }
   else if(S.view==='asset' && A(S.asset)) body=viewAsset(A(S.asset));
   else if(S.view==='form' && A(S.asset)) body=viewForm(A(S.asset),S.section);
+  else if(S.view==='multi' && A(S.asset)) body=viewMulti(A(S.asset));
+  else if(S.view==='bulk' && S.boards[S.board]){ body=viewBulk(S.boards[S.board]); cls='wide'; }
   else if(S.view==='boardEdit' && E){ body=viewBoardEdit(); cls='wide'; }
   else if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]){ body=viewDwg(); cls='full'; }
   else if(S.tab==='drawings') body=tabBar()+viewDrawings();
@@ -812,8 +829,184 @@ function render(){
   if(keepScroll!=null&&$('#paneL')) $('#paneL').scrollTop=keepScroll;
   if(split){ markSel(); if(keepScroll==null){ const sel=$('#paneL .sel'); if(sel) sel.scrollIntoView({block:'center'}); } }
   if(S.view==='form') wireForm();
+  if(S.view==='multi') wireMulti();
+  if(S.view==='bulk') wireBulk();
+  if(S.view!=='asset') S.justSaved=null;
   if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) drawDwg();
 }
+
+/* ================= Fast entry: one screen per circuit, next-untested, bulk grid, remembered choices ================= */
+const LAST=(()=>{ try{ return JSON.parse(localStorage.getItem('nzes.last')||'{}')||{}; }catch(e){ return {}; } })();
+function remember(o){ Object.assign(LAST,o); try{ localStorage.setItem('nzes.last',JSON.stringify(LAST)); }catch(e){} }
+const MEAS=['ir','ohm','ynna','z','ms','amp'];
+const cleanPrev=(prev,id)=>{ if(!prev||!prev.values) return undefined; if(id==='zmax'&&prev.values.zmaxSrc) return ''; return prev.values[id]; };
+function makeRec(a,sec,valsIn,j,c){
+  const vals={}; Object.entries(valsIn).forEach(([k,v])=>{ if(v!==''&&v!=null) vals[k]=String(v); });
+  if(sec.key.endsWith('.zs')){ if(zsDead(valsIn)){ delete vals.zs; delete vals.pfc; } else delete vals.rph; if(!vals.zmax){ const zx=zsMaxFor(valsIn); if(zx){ vals.zmax=String(zx.z); vals.zmaxSrc='calculated '+zx.txt; } } }
+  return {job:S.job,asset:a.tag,board:a.board||'',section:sec.key,cable:sec.cable!=null?((a.cables||[])[sec.cable]||{}).no||'':'',values:vals,result:j.result,why:j.why,
+    testerName:c.tester,licence:S.profile.licence||'',instrument:c.inst||'',serial:c.ser||'',calDue:S.profile.calDue||'',limits:LIM(),testDate:c.date||today(),at:new Date().toISOString(),photo:'',by:S.uid||'',notes:c.notes||'',isolated:c.iso??null};
+}
+const commonHtml=(showInst=true)=>{ const P=S.profile; return `<div class="fgrid">
+  <div class="field"><label for="c_tester">Tested by</label><input id="c_tester" value="${esc(LAST.tester||P.name||'')}" required></div>
+  <div class="field"><label for="c_date">Test date</label><input id="c_date" type="date" value="${today()}"></div>
+  ${showInst?`<div class="field"><label for="c_inst">Instrument</label><input id="c_inst" value="${esc(LAST.inst||P.instrument||'')}"></div>
+  <div class="field"><label for="c_ser">Instrument serial</label><input id="c_ser" value="${esc(LAST.ser||P.serial||'')}"></div>`:''}</div>
+  <div class="field"><label for="c_notes">Notes</label><textarea id="c_notes" rows="2" placeholder="Anything the next person needs to know"></textarea></div>`; };
+function readCommon(){ const tester=$('#c_tester').value.trim(); if(!tester){ toast('Enter who did the test'); $('#c_tester').focus(); return null; }
+  const c={tester,date:$('#c_date').value||today(),inst:$('#c_inst')?$('#c_inst').value.trim():'',ser:$('#c_ser')?$('#c_ser').value.trim():'',notes:$('#c_notes').value.trim()};
+  remember({tester:c.tester!==(S.profile.name||'')?c.tester:'',inst:c.inst!==(S.profile.instrument||'')?c.inst:'',ser:c.ser!==(S.profile.serial||'')?c.ser:''}); return c; }
+
+/* ---- one screen for all of a cable's tests ---- */
+let M=null;
+function openMulti(tag,cable){ S.asset=tag; S.mcable=+cable||0; S.view='multi'; M=null; render(); window.scrollTo(0,0); }
+const multiSecs=(a,ci)=>sectionsFor(a).filter(s=>s.cable===ci||(s.key==='rcd'&&ci===0));
+function viewMulti(a){
+  const ci=S.mcable||0; const c=(a.cables||[])[ci]||{};
+  M={a,cable:ci,parts:multiSecs(a,ci).map(sec=>{ const prev=S.latest[a.tag+'|'+sec.key]; const fields=fieldsFor(a,sec); const vals={};
+    fields.forEach(f=>{ const pv=cleanPrev(prev,f.id); vals[f.id]= pv!==undefined?pv:(f.pre!==undefined&&f.pre!==null?String(f.pre):''); }); return {a,sec,fields,vals,prev,na:false}; })};
+  const iso=needsIsolation(a)&&M.parts.some(p=>p.sec.key.endsWith('.ir'));
+  const part=(p,i)=>{ F=p; const k=p.sec.key; const hideText=k.endsWith('.ct')||k.endsWith('.zs');
+    const plain=p.fields.filter(f=>f.type!=='ynna'&&!(hideText&&f.type==='text')), ys=p.fields.filter(f=>f.type==='ynna');
+    let h=`<section class="mpart" data-part="${i}"><div class="sechead"><h3>${esc(p.sec.title)}</h3><span class="mres" id="mres${i}"></span></div>`;
+    if(k.endsWith('.ct')) h+=`<div class="actions"><button class="btn primary" type="button" data-act="mCont" data-v="${i}">✓ Continuity OK – all cores</button><span class="hint" style="align-self:center">or enter readings (≤ ${CONT_PASS} Ω)</span></div>`;
+    if(k.endsWith('.ir')) h+=`<div class="actions"><button class="btn primary" type="button" data-act="mIR" data-v="${i}">All &gt;${esc(irMax())} MΩ</button><span class="hint" style="align-self:center">or enter readings (≥ ${IR_PASS} MΩ)</span></div>`;
+    if(k.endsWith('.zs')) h+='<div class="hint" id="zsHow"></div><div class="hint" id="zsHint" style="font-weight:600"></div>';
+    if(plain.length) h+=`<div class="fgrid">${plain.map(fieldHtml).join('')}</div>`;
+    if(ys.length>3) h+=`<div class="actions"><button class="btn primary" type="button" data-act="mAllY" data-v="${i}">✓ All ${ys.length} checks OK</button></div><details class="mck"><summary>Show the ${ys.length} checks</summary><div class="checks">${ys.map(fieldHtml).join('')}</div></details>`;
+    else if(ys.length) h+=`<div class="checks">${ys.map(fieldHtml).join('')}</div>`;
+    return h.replace(/id="v_/g,`id="p${i}_v_`).replace(/for="v_/g,`for="p${i}_v_`)+'</section>'; };
+  const bn=a.kind==='circuit'?a.board:(S.backBoard&&S.boards[S.backBoard]?S.backBoard:null);
+  return `<div class="actions">${bn?`<button class="btn" type="button" data-act="board" data-v="${esc(bn)}">← ${esc(bn)}</button>`:''}<button class="btn" type="button" data-act="back">${bn?'Details / history':'← '+esc(a.tag)}</button></div>
+  <form class="test card" id="mform" autocomplete="off">
+    <div><h2><span class="tag">${esc(a.tag)}</span></h2><div style="font-size:1.05rem">${esc(a.desc)}</div>
+      <div class="hint">${esc([a.prot,c.no,c.type,c.size&&c.size+'mm²',c.len&&c.len+'m'].filter(Boolean).join(' · '))}</div></div>
+    ${iso?`<label class="safety"><input type="checkbox" id="isoChk"><span><b>Before insulation testing:</b> drive / EC fan electronics are isolated and disconnected.</span></label>`:''}
+    ${M.parts.map(part).join('')}
+    ${commonHtml()}
+    <div class="hint" id="msum"></div>
+    <button class="btn primary big" type="submit" id="saveBtn">Save</button>
+    <p class="hint">Fill in what you have tested – anything left blank is not saved and stays “to do”.</p>
+  </form>`;
+}
+const pTouched=p=>p.fields.some(f=>MEAS.includes(f.type)&&p.vals[f.id]!==''&&p.vals[f.id]!=null);
+const pChanged=p=>!p.prev||p.prev.result==='na'||p.fields.some(f=>MEAS.includes(f.type)&&String(p.vals[f.id]??'')!==String(cleanPrev(p.prev,f.id)??''));
+function wireMulti(){
+  const form=$('#mform'); if(!form||!M) return;
+  const pOf=el=>{ const s=el.closest('[data-part]'); return s?M.parts[+s.dataset.part]:null; };
+  form.addEventListener('input',e=>{ const f=e.target.dataset&&e.target.dataset.f; const p=f&&pOf(e.target); if(!p) return; F=p; p.vals[f]=e.target.value; markInput(e.target);
+    if(f==='zmax'||f==='In') form.querySelectorAll('input[data-f="zs"],input[data-f="rph"]').forEach(markInput); updateMulti(); });
+  form.addEventListener('submit',e=>{ e.preventDefault(); saveMulti(); });
+  M.parts.forEach((p,i)=>{ F=p; form.querySelectorAll('[data-part="'+i+'"] input[data-f]').forEach(markInput); }); updateMulti();
+}
+function updateMulti(){
+  if(!M) return; const map={pass:['PASS','var(--pass)'],fail:['FAIL','var(--fail)'],warn:['CHECK','var(--warn)'],rec:['Recorded','var(--pass)'],'':['','var(--muted)']}; let n=0;
+  M.parts.forEach((p,i)=>{ const el=$('#mres'+i); if(!el) return; if(p.sec.key.endsWith('.zs')){ F=p; limitHint(); }
+    if(!pTouched(p)){ el.textContent='To do'; el.style.color='var(--muted)'; return; }
+    if(!pChanged(p)){ el.textContent='Already saved'+(p.prev.result==='fail'?' – FAIL':''); el.style.color=p.prev.result==='fail'?'var(--fail)':'var(--muted)'; return; }
+    const j=judge(p.a,p.sec,p.vals,false); const [t,c]=map[j.result]||map['']; el.textContent=t+(j.why?' — '+j.why:''); el.style.color=c; n++; });
+  const s=$('#msum'); if(s) s.textContent=n?n+' test'+(n===1?'':'s')+' ready to save':''; const b=$('#saveBtn'); if(b) b.textContent=n?'Save '+n+' test'+(n===1?'':'s'):'Save';
+}
+async function saveMulti(){
+  const todo=M.parts.filter(p=>pTouched(p)&&pChanged(p)); if(!todo.length){ toast('Nothing new to save'); return; }
+  const c=readCommon(); if(!c) return;
+  const iso=$('#isoChk'); if(iso&&!iso.checked&&todo.some(p=>p.sec.key.endsWith('.ir'))){ toast('Confirm the drive / EC electronics are isolated'); iso.focus(); return; } c.iso=iso?iso.checked:null;
+  const btn=$('#saveBtn'); btn.disabled=true; btn.textContent='Saving…'; let ok=0,fails=0,queued=0;
+  try{ for(const p of todo){ const j=judge(p.a,p.sec,p.vals,false); if(!j.result) continue; const r=await S.db.collection('tests').add(makeRec(p.a,p.sec,p.vals,j,c)); ok++; if(j.result==='fail') fails++; if(r.queued) queued++;
+      if(p.sec.key.endsWith('.zs')) remember({method:p.vals.method||'Live'}); if(p.sec.key==='rcd'&&p.vals.rtype) remember({rtype:p.vals.rtype}); p.prev={result:j.result,values:Object.assign({},p.vals)}; }
+    toast((queued?'Saved on this device – ':'Saved ')+ok+' test'+(ok===1?'':'s')+(fails?' · '+fails+' FAIL added to Defects':'')); S.justSaved=M.a.tag; M=null; S.view='asset'; render(); window.scrollTo(0,0);
+  }catch(e){ btn.disabled=false; updateMulti(); toast(ok?('Saved '+ok+', then failed ('+(e.code||'error')+'). Press Save again for the rest.'):e.code==='invalid_argument'?'You do not have permission to save – ask James.':'Could not save ('+(e.code||'error')+'). Try again.'); }
+}
+/* ---- next untested ---- */
+function nextTarget(a){
+  const secs=sectionsFor(a); const s=secs.find(x=>!S.latest[a.tag+'|'+x.key]);
+  if(s) return (s.cable!=null||s.key==='rcd')?{t:'multi',tag:a.tag,cable:s.cable||0,label:secs.filter(x=>!S.latest[a.tag+'|'+x.key]).length+' tests still to do here'}:{t:'sec',tag:a.tag,key:s.key,label:s.title};
+  const bn=a.kind==='circuit'?a.board:(S.backBoard&&S.boards[S.backBoard]?S.backBoard:null);
+  if(bn){ const b=S.boards[bn], cs=(b.circuits||[]).filter(c=>!isSpare(c)); const at=cs.findIndex(c=>(c.asset&&S.assets[c.asset]?c.asset:cctTag(b,c))===a.tag);
+    for(let k=1;k<=cs.length;k++){ const c=cs[(at+k)%cs.length]; const st=cctStatus(b,c).st; if(st==='none'||st==='part'){ const tag=c.asset&&S.assets[c.asset]?c.asset:cctTag(b,c); return {t:'asset',tag,board:bn,label:c.id+' '+(c.desc||'')}; } }
+    return null; }
+  const list=filteredAssets(); const at=list.findIndex(x=>x.tag===a.tag);
+  for(let k=1;k<=list.length;k++){ const x=list[(at+k+list.length)%list.length]; if(x.tag===a.tag) break; const st=assetStatus(x).st; if(st==='none'||st==='part') return {t:'asset',tag:x.tag,label:x.tag+' '+(x.desc||'')}; }
+  return null;
+}
+function goNext(){ const a=A(S.asset); if(!a) return; const n=nextTarget(a); if(!n){ toast('Nothing left to test here'); return; }
+  if(n.t==='sec'){ S.section=n.key; S.view='form'; F=null; render(); window.scrollTo(0,0); return; }
+  if(n.t==='asset'){ if(n.board) S.backBoard=n.board; const x=A(n.tag); const m=x&&nextTarget(x); if(m&&m.t==='multi'&&m.tag===n.tag){ openMulti(n.tag,m.cable); return; } S.asset=n.tag; S.view='asset'; render(); window.scrollTo(0,0); return; }
+  openMulti(n.tag,n.cable); }
+function nextBar(a){ const n=nextTarget(a); const done=S.justSaved===a.tag;
+  if(!n) return done?'<div class="banner ok">✓ Saved. Everything here and on this list is tested.</div>':'';
+  return `<button class="btn primary big" type="button" data-act="next">${done?'✓ Saved – ':''}Next: ${esc(n.t==='asset'?n.label:n.t==='multi'?'test this '+(a.kind==='circuit'?'circuit':'cable')+' ('+n.label+')':n.label)} →</button>`; }
+
+/* ---- bulk grid for a whole board ---- */
+let B=null;
+const BK=[['ct','Cont. OK','chk'],['ir','IR MΩ','num'],['pol','Polarity OK','chk'],['zs','Loop Ω','num'],['t1','RCD 1× ms','num'],['t5','RCD 5× ms','num'],['ck','Checks OK','chk']];
+function viewBulk(b){
+  B={b,rows:(b.circuits||[]).filter(c=>!isSpare(c)).map(c=>{ const [a,ci]=cctAsset(b,c); if(!a) return null; const secs={}; sectionsFor(a).forEach(s=>{ if(s.cable===ci) secs[s.key.split('.')[1]]=s; else if(s.key==='rcd') secs.rcd=s; }); return {c,a,ci,secs}; }).filter(Boolean)};
+  const iso=B.rows.some(r=>r.secs.ir&&needsIsolation(r.a));
+  const cell=(r,i,[k,,type])=>{ const sec=k==='t1'||k==='t5'?r.secs.rcd:r.secs[k]; if(!sec) return '<td class="na">–</td>'; const t=S.latest[r.a.tag+'|'+sec.key];
+    const had=t?(t.result==='fail'?'FAIL':k==='ir'?'saved':k==='zs'?(t.values.zs||t.values.rph||'saved'):k==='t1'?(t.values.t1||''):k==='t5'?(t.values.t5||''):'✓'):'';
+    return type==='chk'?`<td class="${t?(t.result==='fail'?'bad':'had'):''}"><input type="checkbox" data-b="${i}" data-k="${k}" aria-label="${esc(r.c.id+' '+k)}">${t?`<small>${had}</small>`:''}</td>`
+      :`<td><input inputmode="decimal" data-b="${i}" data-k="${k}" placeholder="${esc(had)}" aria-label="${esc(r.c.id+' '+k)}"></td>`; };
+  return `<div class="actions"><button class="btn" type="button" data-act="board" data-v="${esc(b.name)}">← ${esc(b.name)}</button></div>
+  <form class="test card" id="bform" autocomplete="off"><div><h2>Bulk entry – <span class="tag">${esc(b.name)}</span></h2><p class="hint">Fill in the board like a paper schedule and save it in one go. Blank cells are left alone; grey ticks and values show what is already saved.</p></div>
+   ${iso?`<label class="safety"><input type="checkbox" id="isoChk"><span><b>Before insulation testing:</b> drive / EC fan electronics are isolated and disconnected.</span></label>`:''}
+   <div class="actions"><button class="btn" type="button" data-act="bulkAll" data-v="ct">Tick all continuity</button><button class="btn" type="button" data-act="bulkAll" data-v="ir">All IR &gt;${esc(irMax())}</button><button class="btn" type="button" data-act="bulkAll" data-v="pol">Tick all polarity</button><button class="btn" type="button" data-act="bulkAll" data-v="ck">Tick all checks</button>
+     <label class="hint" style="align-self:center">Loop test: <select id="b_method"><option ${LAST.method!=='Dead'?'selected':''}>Live</option><option ${LAST.method==='Dead'?'selected':''}>Dead</option></select></label></div>
+   <div class="tablewrap"><table class="sched bulk"><thead><tr><th>Cct</th><th>Description</th>${BK.map(([,l])=>`<th>${l}</th>`).join('')}</tr></thead><tbody>
+   ${B.rows.map((r,i)=>`<tr><td class="tag">${esc(r.c.id)}</td><td>${esc(r.c.desc||'')}<div class="d">${esc(r.c.prot||'')}${r.c.asset?' · '+esc(r.c.asset):''}</div></td>${BK.map(k=>cell(r,i,k)).join('')}</tr>`).join('')}
+   </tbody></table></div>
+   ${commonHtml()}<div class="hint" id="bsum"></div><button class="btn primary big" type="submit" id="saveBtn">Save</button></form>`;
+}
+function bulkVals(r,k,v,method){
+  const sec=k==='rcd'?r.secs.rcd:r.secs[k]; const fields=fieldsFor(r.a,sec); const vals={}; fields.forEach(f=>{ if(f.pre!==undefined&&f.pre!==null&&f.pre!=='') vals[f.id]=String(f.pre); });
+  if(k==='ct') fields.filter(f=>f.type==='ohm').forEach(f=>vals[f.id]='OK');
+  else if(k==='ir') fields.filter(f=>f.type==='ir').forEach(f=>vals[f.id]=v);
+  else if(k==='pol'||k==='ck') fields.filter(f=>f.type==='ynna').forEach(f=>vals[f.id]='Y');
+  else if(k==='zs'){ vals.method=method; vals[method==='Dead'?'rph':'zs']=v; }
+  else if(k==='rcd'){ if(v.t1) vals.t1=v.t1; if(v.t5) vals.t5=v.t5; }
+  return {sec,vals};
+}
+function bulkCollect(){
+  const form=$('#bform'); const method=$('#b_method').value; const out=[];
+  B.rows.forEach((r,i)=>{ const g=k=>form.querySelector(`[data-b="${i}"][data-k="${k}"]`); const val=k=>{ const e=g(k); return e?(e.type==='checkbox'?e.checked:e.value.trim()):''; };
+    ['ct','pol','ck'].forEach(k=>{ if(val(k)) out.push(Object.assign({r,k,el:g(k)},bulkVals(r,k,true,method))); });
+    ['ir','zs'].forEach(k=>{ const v=val(k); if(v) out.push(Object.assign({r,k,el:g(k)},bulkVals(r,k,v,method))); });
+    const t1=val('t1'), t5=val('t5'); if(t1||t5) out.push(Object.assign({r,k:'rcd',el:g('t1')},bulkVals(r,'rcd',{t1,t5},method))); });
+  out.forEach(o=>{ o.j=judge(o.r.a,o.sec,o.vals,false); });
+  return out;
+}
+function updateBulk(){
+  const form=$('#bform'); if(!form||!B) return; form.querySelectorAll('input.bad,input.good,input.warnc').forEach(e=>e.classList.remove('bad','good','warnc'));
+  const out=bulkCollect(); let f=0; out.forEach(o=>{ if(o.j.result==='fail') f++; const mark=e=>{ if(e&&e.type!=='checkbox'&&e.value.trim()) e.classList.add(o.j.result==='fail'?'bad':o.j.result==='warn'?'warnc':'good'); };
+    mark(o.el); if(o.k==='rcd') mark(form.querySelector(`[data-b="${B.rows.indexOf(o.r)}"][data-k="t5"]`)); });
+  $('#bsum').textContent=out.length?out.length+' test'+(out.length===1?'':'s')+' ready to save'+(f?' · '+f+' will FAIL':''):''; $('#saveBtn').textContent=out.length?'Save '+out.length+' test'+(out.length===1?'':'s'):'Save';
+}
+function wireBulk(){ const form=$('#bform'); if(!form) return; form.addEventListener('input',updateBulk); form.addEventListener('change',updateBulk); form.addEventListener('submit',e=>{ e.preventDefault(); saveBulk(); }); updateBulk(); }
+async function saveBulk(){
+  const out=bulkCollect().filter(o=>o.j.result); if(!out.length){ toast('Nothing entered yet'); return; }
+  const c=readCommon(); if(!c) return;
+  const iso=$('#isoChk'); if(iso&&!iso.checked&&out.some(o=>o.k==='ir'&&needsIsolation(o.r.a))){ toast('Confirm the drive / EC electronics are isolated'); iso.focus(); return; } c.iso=iso?iso.checked:null;
+  remember({method:$('#b_method').value});
+  const btn=$('#saveBtn'); btn.disabled=true; let ok=0,fails=0,queued=0; const name=B.b.name;
+  try{ for(const o of out){ btn.textContent='Saving '+(ok+1)+' of '+out.length+'…'; const r=await S.db.collection('tests').add(makeRec(o.r.a,o.sec,o.vals,o.j,c)); ok++; if(o.j.result==='fail') fails++; if(r.queued) queued++;
+      o.el.type==='checkbox'?(o.el.checked=false):(o.el.value=''); if(o.k==='rcd'){ const e5=$('#bform').querySelector(`[data-b="${B.rows.indexOf(o.r)}"][data-k="t5"]`); if(e5) e5.value=''; } }
+    toast((queued?'Saved on this device – ':'Saved ')+ok+' test'+(ok===1?'':'s')+(fails?' · '+fails+' FAIL added to Defects':'')); B=null; S.board=name; S.tab='boards'; S.view='board'; render(); window.scrollTo(0,0);
+  }catch(e){ btn.disabled=false; updateBulk(); toast('Saved '+ok+' of '+out.length+', then failed ('+(e.code||'error')+'). Saved cells are cleared – press Save again for the rest.'); }
+}
+function fastClick(act,b){
+  const v=b.dataset.v;
+  if(act==='multi'){ openMulti(S.asset,v); return true; }
+  if(act==='next'){ goNext(); return true; }
+  if(act==='bulk'){ S.board=v; S.tab='boards'; S.view='bulk'; B=null; render(); window.scrollTo(0,0); return true; }
+  if(act==='bulkAll'){ const form=$('#bform'); form.querySelectorAll(`[data-k="${v}"]`).forEach(e=>{ if(e.type==='checkbox'){ if(!e.closest('td').classList.contains('had')) e.checked=true; } else if(!e.value&&!e.placeholder) e.value='>'+irMax(); }); updateBulk(); return true; }
+  if(M&&(act==='mCont'||act==='mIR'||act==='mAllY')){ const p=M.parts[+v], sc=$('#mform [data-part="'+v+'"]'); F=p;
+    if(act==='mAllY'){ p.fields.filter(f=>f.type==='ynna').forEach(f=>p.vals[f.id]='Y'); sc.querySelectorAll('.checks .seg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v==='Y')); }
+    else { const t=act==='mIR'?'ir':'ohm', val=act==='mIR'?'>'+irMax():'OK'; sc.querySelectorAll('input[data-t="'+t+'"]').forEach(i=>{ i.value=val; p.vals[i.dataset.f]=val; markInput(i); }); }
+    updateMulti(); return true; }
+  if(act==='seg'&&M&&S.view==='multi'){ const sc=b.closest('[data-part]'); if(sc) F=M.parts[+sc.dataset.part]; return false; }
+  if(act==='officeTog'){ const on=!document.body.classList.contains('office-on'); document.body.classList.toggle('office-on',on); try{ localStorage.setItem('nzes.office',on?'1':''); }catch(e){} closeModal(); toast(on?'Office tools shown on this device':'Office tools hidden on this device'); return true; }
+  return false;
+}
+try{ if(localStorage.getItem('nzes.office')) document.body.classList.add('office-on'); }catch(e){}
 
 /* ================= Defects =================
    A failed test IS a defect: it opens when the test fails and closes itself when that test is redone and passes.
@@ -847,7 +1040,7 @@ function viewDefects(){
   const all=defectList(); const f=S.dfilter||'open'; const q=(S.dq2||'').trim().toLowerCase();
   const list=all.filter(d=>(f==='all'||d.status===f||(f==='mine'&&d.status==='open'&&d.owner&&S.profile.name&&d.owner.toLowerCase()===S.profile.name.toLowerCase()))&&(!q||[d.asset,d.title,d.detail,d.owner,d.desc].join(' ').toLowerCase().includes(q)));
   const n={open:all.filter(d=>d.status==='open').length,closed:all.filter(d=>d.status==='closed').length};
-  return `<div class="actions"><button class="btn primary" type="button" data-act="defNew">+ Raise a defect</button><button class="btn" type="button" data-act="defCsv" ${all.length?'':'disabled'}>Export defects CSV</button></div>
+  return `<div class="actions"><button class="btn primary" type="button" data-act="defNew">+ Raise a defect</button><button class="btn office" type="button" data-act="defCsv" ${all.length?'':'disabled'}>Export defects CSV</button></div>
   <input class="search" id="dq2" type="search" placeholder="Search tag, description or owner" value="${esc(S.dq2||'')}" autocomplete="off">
   <div class="chips" role="group" aria-label="Status">${[['open','Open ('+n.open+')'],['mine','Mine'],['closed','Closed ('+n.closed+')'],['all','All']].map(([k,l])=>`<button class="chip" type="button" data-act="defFilter" data-v="${k}" aria-pressed="${f===k}">${l}</button>`).join('')}</div>
   <div class="list">${list.map(defRow).join('')||`<div class="card hint">${f==='open'?'No open defects. A failed test shows up here automatically.':'Nothing to show.'}</div>`}</div>
@@ -952,7 +1145,7 @@ function viewSummary(){
   const pct=(a,b)=>b?Math.round(a/b*100):0;
   const bar=(o,n)=>`<div class="sbar" role="img" aria-label="${o.done} complete, ${o.part} in progress, ${o.fail} with a fail, ${o.none} not started">${['done','part','fail','none'].map(k=>o[k]?`<span class="b-${k}" style="width:${o[k]/n*100}%"></span>`:'').join('')}</div>`;
   const n=all.length;
-  return `<div class="actions"><button class="btn" type="button" data-act="csv">Export results CSV</button><button class="btn" type="button" data-act="coc">CoC draft</button>${S.canEdit?'<button class="btn" type="button" data-act="sumAccess">Who can see this</button>':''}</div>
+  return `<div class="actions"><button class="btn office" type="button" data-act="csv">Export results CSV</button><button class="btn office" type="button" data-act="coc">CoC draft</button>${S.canEdit?'<button class="btn office" type="button" data-act="sumAccess">Who can see this</button>':''}</div>
   <div class="stats">
     <div class="stat done"><b>${pct(tot.done,n)}%</b><span>Assets complete (${tot.done}/${n})</span></div>
     <div class="stat part"><b>${pct(tests.done,tests.total)}%</b><span>Tests passed (${tests.done}/${tests.total})</span></div>
@@ -1019,9 +1212,9 @@ function viewHome(){
   <div class="chips" role="group" aria-label="Group">${groups.map(g=>`<button class="chip" type="button" data-act="group" data-v="${esc(g)}" aria-pressed="${S.group===g}">${esc(g)}</button>`).join('')}</div>
   <div class="chips" role="group" aria-label="Status">${['All','none','part','fail','done'].map(s=>`<button class="chip" type="button" data-act="status" data-v="${s}" aria-pressed="${S.status===s}">${s==='All'?'Any status':ST_LABEL[s]}</button>`).join('')}</div>
   <div class="actions">
-    <button class="btn primary" type="button" data-act="pdfList" ${list.length?'':'disabled'}>Test sheets PDF (${list.length})</button>
-    <button class="btn" type="button" data-act="csv">Export results CSV</button>
-    ${S.canEdit?'<button class="btn" type="button" data-act="limits">Test limits</button><button class="btn" type="button" data-act="addDev">+ Add device</button><button class="btn" type="button" data-act="import">Import CSV</button>':''}
+    <button class="btn primary office" type="button" data-act="pdfList" ${list.length?'':'disabled'}>Test sheets PDF (${list.length})</button>
+    <button class="btn office" type="button" data-act="csv">Export results CSV</button>
+    ${S.canEdit?'<button class="btn office" type="button" data-act="limits">Test limits</button><button class="btn office" type="button" data-act="addDev">+ Add device</button><button class="btn office" type="button" data-act="import">Import CSV</button>':''}
   </div>
   <div class="list">${list.map(rowHtml).join('')||'<div class="card hint">No assets match.</div>'}</div>`;
 }
@@ -1054,8 +1247,8 @@ function viewAsset(a){
   const sl={};secs.forEach(s=>sl[s.key]=s);
   return `
   <div class="actions">${a.kind==='circuit'?`<button class="btn" type="button" data-act="board" data-v="${esc(a.board)}">← ${esc(a.board)} schedule</button>`:`${S.backBoard&&S.boards[S.backBoard]?`<button class="btn" type="button" data-act="board" data-v="${esc(S.backBoard)}">← ${esc(S.backBoard)} schedule</button>`:''}<button class="btn" type="button" data-act="home">← All assets</button>`}
-    <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>${dwgButtonForAsset(a)}<button class="btn" type="button" data-act="defNew">Raise a defect</button>
-    ${S.canEdit&&a.kind!=='circuit'?'<button class="btn" type="button" data-act="editDev">Edit device</button>':''}${S.canEdit&&a.kind==='circuit'?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(a.board)}">Edit schedule</button>`:''}</div>
+    <button class="btn primary office" type="button" data-act="pdfOne">Test sheet PDF</button>${dwgButtonForAsset(a)}<button class="btn" type="button" data-act="defNew">Raise a defect</button>
+    ${S.canEdit&&a.kind!=='circuit'?'<button class="btn office" type="button" data-act="editDev">Edit device</button>':''}${S.canEdit&&a.kind==='circuit'?`<button class="btn office" type="button" data-act="editBoard" data-v="${esc(a.board)}">Edit schedule</button>`:''}</div>
   <div class="card">
     <div class="sechead"><h2><span class="tag">${esc(a.tag)}</span></h2><span class="pill p-${st.st}">${ST_LABEL[st.st]} · ${st.done}/${st.total}</span></div>
     <div style="font-size:1.1rem;margin-top:4px">${esc(a.desc)}</div>
@@ -1068,9 +1261,11 @@ function viewAsset(a){
     ${a.photos&&a.photos.length?`<div class="photos">${photoStrip(a.photos,false)}</div>`:''}
     ${a.notes&&a.notes.length?`<ul class="flags">${a.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}
   </div>
+  ${nextBar(a)}
   ${defStripForAsset(a)}
   ${Object.entries(groups).map(([g,ss])=>`
     <div class="sechead"><h3>${esc(g)}</h3>${ss[0].cable!=null&&a.cables&&a.cables[ss[0].cable]?`<small>${esc([a.cables[ss[0].cable].type,a.cables[ss[0].cable].size&&a.cables[ss[0].cable].size+'mm²',a.cables[ss[0].cable].len&&a.cables[ss[0].cable].len+'m'].filter(Boolean).join(' · '))}</small>`:''}</div>
+    ${ss[0].cable!=null?`<div class="actions"><button class="btn primary" type="button" data-act="multi" data-v="${ss[0].cable}">Enter all on one screen</button></div>`:''}
     <div class="tiles">${ss.map(s=>{const t=S.latest[a.tag+'|'+s.key];
       const r=t?t.result:''; const lab=t?({pass:'Pass',fail:'FAIL',na:'N/A',rec:'Recorded',warn:'Check'}[r]||'Saved'):'To do';
       return `<button class="tile ${r?'r-'+r:''}" type="button" data-act="sec" data-v="${esc(s.key)}">
@@ -1091,7 +1286,7 @@ function viewForm(a,key){
   const sec=sectionsFor(a).find(s=>s.key===key); if(!sec){S.view='asset';return viewAsset(a);}
   const prev=S.latest[a.tag+'|'+key];
   const fields=fieldsFor(a,sec);
-  const vals={}; fields.forEach(f=>{ vals[f.id]= prev&&prev.values&&prev.values[f.id]!==undefined? prev.values[f.id] : (f.pre!==undefined&&f.pre!==null?String(f.pre):''); });
+  const vals={}; fields.forEach(f=>{ const pv=cleanPrev(prev,f.id); vals[f.id]= pv!==undefined? pv : (f.pre!==undefined&&f.pre!==null?String(f.pre):''); });
   F={a,sec,fields,vals,na:prev?prev.result==='na':false,iso:false,photo:'',prevPhoto:prev&&prev.photo||''};
   const P=S.profile;
   const iso = (key==='mir'||key.endsWith('.ir')) && needsIsolation(a);
@@ -1115,10 +1310,10 @@ function viewForm(a,key){
     ${hasCk?`<div class="checks">${fields.filter(f=>f.type==='ynna').map(fieldHtml).join('')}</div>
       ${fields.filter(f=>f.type==='ynna').length>3?'<div class="actions"><button class="btn" type="button" data-act="allY">Mark all Yes</button></div>':''}`:''}
     <div class="fgrid">
-      <div class="field"><label for="f_tester">Tested by</label><input id="f_tester" value="${esc(P.name||'')}" required></div>
+      <div class="field"><label for="f_tester">Tested by</label><input id="f_tester" value="${esc(LAST.tester||P.name||'')}" required></div>
       <div class="field"><label for="f_date">Test date</label><input id="f_date" type="date" value="${today()}"></div>
-      ${(hasIR||fields.some(f=>f.type==='ohm'))?`<div class="field"><label for="f_inst">Instrument</label><input id="f_inst" value="${esc(P.instrument||'')}"></div>
-      <div class="field"><label for="f_ser">Instrument serial</label><input id="f_ser" value="${esc(P.serial||'')}"></div>`:''}
+      ${(hasIR||fields.some(f=>f.type==='ohm'))?`<div class="field"><label for="f_inst">Instrument</label><input id="f_inst" value="${esc(LAST.inst||P.instrument||'')}"></div>
+      <div class="field"><label for="f_ser">Instrument serial</label><input id="f_ser" value="${esc(LAST.ser||P.serial||'')}"></div>`:''}
     </div>
     <div class="field"><label for="f_notes">Notes</label><textarea id="f_notes" rows="2" placeholder="Anything the next person needs to know">${esc(prev&&prev.notes||'')}</textarea></div>
     <label class="hint" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="naChk" ${F.na?'checked':''}> Not applicable to this asset (say why in notes)</label>
@@ -1169,6 +1364,7 @@ function markInput(el){
   if(t==='z' && (el.dataset.f==='zs'||el.dataset.f==='rph')){ const zx=zsMaxFor(F.vals); if(zx) el.classList.add(n>zx.z?'bad':'good'); }
 }
 function updateResult(){
+  if(S.view==='multi'){ updateMulti(); return; }
   const j=judge(F.a,F.sec,F.vals,F.na); const el=$('#resultLine'); if(!el) return;
   const map={pass:['PASS','var(--pass)'],fail:['FAIL','var(--fail)'],warn:['CHECK','var(--warn)'],na:['NOT APPLICABLE','var(--muted)'],rec:['Recorded','var(--pass)'],'':['','var(--muted)']};
   limitHint();
@@ -1190,6 +1386,7 @@ async function saveTest(){
   btn.disabled=true; btn.textContent='Saving…';
   try{
     const r=await S.db.collection('tests').add(rec);
+    remember({tester:tester!==(S.profile.name||'')?tester:'',inst:rec.instrument&&rec.instrument!==(S.profile.instrument||'')?rec.instrument:LAST.inst||'',ser:rec.serial&&rec.serial!==(S.profile.serial||'')?rec.serial:LAST.ser||''}); if(vals.method) remember({method:vals.method}); if(vals.rtype) remember({rtype:vals.rtype}); S.justSaved=F.a.tag;
     toast(r.queued?'Saved on this device – uploads when signal returns':j.result==='fail'?'Saved – FAIL recorded and added to Defects':'Saved'); S.view='asset'; render();
   }catch(e){
     btn.disabled=false; btn.textContent='Save test';
@@ -1208,13 +1405,14 @@ function onClick(e){
   const act=b.dataset.act, v=b.dataset.v;
   if(dwgClick(act,b)) return;
   if(defClick(act,b)) return;
+  if(fastClick(act,b)) return;
   if(act==='open'||act==='board') closeModal();
   if(act==='open'){S.backBoard=(S.tab==='boards'&&S.view==='board')?S.board:(b.closest('#paneL')&&S.paneBoard)||null; S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
   else if(act==='home'){S.view='home';S.tab='assets';S.backBoard=null;render();}
   else if(act==='tab'){S.tab=v;S.view=v==='boards'?'boards':v==='drawings'?'drawings':'home';render();window.scrollTo(0,0);}
   else if(act==='board'){S.tab='boards';S.board=v;S.view='board';render();window.scrollTo(0,0);}
   else if(act==='boards'){S.tab='boards';S.view='boards';render();}
-  else if(act==='cct'){S.asset=v;S.view='asset';render();if(!WIDE())window.scrollTo(0,0);}
+  else if(act==='cct'){ const x=A(v), n=x&&nextTarget(x); if(n&&n.t==='multi'&&n.tag===v) openMulti(v,n.cable); else {S.asset=v;S.view='asset';render();if(!WIDE())window.scrollTo(0,0);} }
   else if(act==='editBoard'){openBoardEdit(v);}
   else if(act==='newBoard'){openBoardEdit(null);}
   else if(act==='pdfBoard'){boardPdf(S.boards[v]);}
@@ -1272,6 +1470,7 @@ function openProfile(){
     <div class="field"><label for="p_irmax">Insulation tester max reading (MΩ)</label><input id="p_irmax" inputmode="decimal" placeholder="999" value="${esc(P.irMax||'')}"></div>
    </div>
    <div class="actions"><button class="btn primary" type="submit" ${S.uid?'':'disabled'}>Save</button><button class="btn" type="button" data-act="close">Cancel</button></div>
+   <p class="hint wide-hide"><button class="btn" type="button" data-act="officeTog" style="padding:4px 10px">${document.body.classList.contains('office-on')?'Hide':'Show'} office tools on this device</button> PDFs, exports, CoC, editing${S.canEdit?' and uploads':''} are hidden on phones to keep the screen simple.</p>
    <p class="hint">Signed in as ${esc(S.email||'')}. <button class="btn" type="button" id="signOut" style="padding:4px 10px">Sign out</button></p>
   </form>`);
   $('#signOut').addEventListener('click',async()=>{ if(NET.pending.length&&!confirm(NET.pending.length+' test(s) have not uploaded yet. Sign out anyway? They stay on this device.')) return; try{ localStorage.removeItem('nzes.ident'); }catch(e){} await sb.auth.signOut(); });
@@ -1624,7 +1823,7 @@ function tabBar(){
 function viewBoards(){
   if(S.loaded && S.loaded.b===false) return `<div class="card"><h2>Loading schedules…</h2></div>`;
   const bs=Object.values(S.boards).sort((x,y)=>(x.order??999)-(y.order??999)||x.name.localeCompare(y.name));
-  return `<div class="actions"><button class="btn primary" type="button" data-act="coc">CoC draft</button>${S.canEdit?'<button class="btn" type="button" data-act="newBoard">+ Add board</button>':''}</div>
+  return `<div class="actions"><button class="btn primary office" type="button" data-act="coc">CoC draft</button>${S.canEdit?'<button class="btn office" type="button" data-act="newBoard">+ Add board</button>':''}</div>
   <div class="list">${bs.map(b=>{ const r=boardSummary(b); const st=r.fail?'fail':r.n&&r.done===r.n?'done':(r.done||r.part)?'part':'none';
     return `<button class="row s-${st}" type="button" data-act="board" data-v="${esc(b.name)}"><span class="stripe"></span>
       <span><span class="t1"><span class="tag">${esc(b.name)}</span><span class="d">${esc(b.supply||'')}</span></span>
@@ -1636,8 +1835,8 @@ function viewBoards(){
 function viewBoard(b){
   const r=boardSummary(b);
   return `<div class="actions"><button class="btn" type="button" data-act="boards">← All boards</button>
-    <button class="btn primary" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button><button class="btn" type="button" data-act="coc" data-v="${esc(b.name)}">CoC draft</button>${dwgForPanel(b.name).length?`<button class="btn" type="button" data-act="dwgPanel" data-v="${esc(b.name)}">Drawings</button>`:''}
-    ${S.canEdit?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(b.name)}">Edit schedule</button>`:''}</div>
+    <button class="btn primary office" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button><button class="btn" type="button" data-act="bulk" data-v="${esc(b.name)}">Bulk entry</button><button class="btn office" type="button" data-act="coc" data-v="${esc(b.name)}">CoC draft</button>${dwgForPanel(b.name).length?`<button class="btn" type="button" data-act="dwgPanel" data-v="${esc(b.name)}">Drawings</button>`:''}
+    ${S.canEdit?`<button class="btn office" type="button" data-act="editBoard" data-v="${esc(b.name)}">Edit schedule</button>`:''}</div>
   <div class="card"><div class="sechead"><h2><span class="tag">${esc(b.name)}</span></h2><span class="prog">${r.done}/${r.n} tested${r.fail?' · '+r.fail+' fail':''}</span></div>
     <div style="font-size:1.1rem;margin-top:4px">${esc(b.desc||'')}</div>
     <div class="kv">${kv('Fed from',b.fed)}${kv('Supply',b.supply)}${kv('Location',b.location)}${kv('Circuits',(b.circuits||[]).length)}</div>
@@ -1816,7 +2015,7 @@ function dwgForPanel(name){ return dwgSets().filter(d=>d.panel===name||d.name===
 
 function viewDrawings(){
   const ds=dwgSets();
-  return `<div class="actions">${S.canEdit?'<button class="btn primary" type="button" data-act="dwgUpload">Upload drawing PDFs</button>':''}${ds.some(d=>d.file)?'<button class="btn" type="button" data-act="dwgAll">Save all for offline</button>':''}
+  return `<div class="actions">${S.canEdit?'<button class="btn primary office" type="button" data-act="dwgUpload">Upload drawing PDFs</button>':''}${ds.some(d=>d.file)?'<button class="btn" type="button" data-act="dwgAll">Save all for offline</button>':''}
     <input class="search" id="dq" type="search" placeholder="Find a tag on the drawings, e.g. 511-PT-01" value="${esc(S.dq||'')}" autocomplete="off" style="flex:1;min-width:200px;margin:0"></div>
   ${S.dq?dwgSearchHtml(S.dq):''}
   <div class="list">${ds.map(d=>{ const up=!!d.file;
