@@ -368,7 +368,7 @@ function wireLogin(){
 
 /* ---------------- Test definitions ---------------- */
 /* ================= Pass/fail limits (per job, admin-editable) ================= */
-const DEF_LIMITS={irMin:1,contMax:1,u0:230,mB:4,mC:7.5,mD:12.5,zsFactor:1,rcd1:300,rcd5:40,flcOver:0};
+const DEF_LIMITS={irMin:1,contMax:1,u0:230,mB:4,mC:7.5,mD:12.5,zsFactor:1,rphF:0.8,rcd1:300,rcd5:40,flcOver:0};
 function LIM(){ const j=(typeof S!=='undefined'&&S.jobs&&S.jobs[S.job])||{}; const o=Object.assign({},DEF_LIMITS); Object.entries(j.limits||{}).forEach(([k,v])=>{ const n=parseFloat(v); if(k in DEF_LIMITS&&isFinite(n)) o[k]=n; }); return o; }
 Object.defineProperty(window,'IR_PASS',{get:()=>LIM().irMin});
 Object.defineProperty(window,'CONT_PASS',{get:()=>LIM().contMax});
@@ -387,14 +387,20 @@ function zsCalc(vals){
   if(!m||!isFinite(In)||In<=0) return null;
   const z=L.u0/(m*In)*L.zsFactor; return {z:Math.round(z*100)/100,txt:`${L.u0} V ÷ (${m} × ${In} A)${L.zsFactor!==1?' × '+L.zsFactor:''}`};
 }
-function zsMaxFor(vals){ const e=parseNum(vals.zmax); if(isFinite(e)) return {z:e,src:'entered'}; const c=zsCalc(vals); return c?{z:c.z,src:'calc',txt:c.txt}:null; }
+const zsDead=vals=>vals.method==='Dead';
+/* Dead test: only the circuit's own active + earth conductors are measured, so the limit is a fraction of Zs max (the rest is allowed for the supply) */
+function zsMaxFor(vals){ const e=parseNum(vals.zmax); if(isFinite(e)) return {z:e,src:'entered'}; const c=zsCalc(vals); if(!c) return null;
+  if(zsDead(vals)){ const f=LIM().rphF; return {z:Math.round(c.z*f*100)/100,src:'calc',txt:c.txt+' × '+f}; } return {z:c.z,src:'calc',txt:c.txt}; }
 function limitHint(){
   const el=document.getElementById('zsHint'); if(!el||!F) return;
-  const c=zsCalc(F.vals), e=parseNum(F.vals.zmax);
-  el.textContent= isFinite(e)?('Using the Zs max you entered ('+F.vals.zmax+' Ω).'+(c?' Calculated would be '+c.z+' Ω.':''))
-    : c?('Zs max calculated: '+c.txt+' = '+c.z+' Ω. Type a Zs max to override it.')
-    : (F.vals.curve==='MCCB'||F.vals.curve==='Fuse')?'MCCB / fuse / motor CB: enter Zs max from the maker\'s data or your copy of AS/NZS 3000 – it is not calculated.'
-    : 'Enter the rating and pick the curve (B/C/D) to calculate Zs max, or type it in.';
+  const dead=zsDead(F.vals); const form=document.getElementById('tform');
+  if(form){ const show=(f,on)=>{ const i=form.querySelector('input[data-f="'+f+'"]'); if(i&&i.closest('.field')) i.closest('.field').style.display=on?'':'none'; }; show('zs',!dead); show('pfc',!dead); show('rph',dead);
+    const how=document.getElementById('zsHow'); if(how) how.textContent=dead?'Dead test: isolate and prove dead, link active to earth at the far end of the circuit, then measure active-to-earth at the board with a low-ohm meter. Zero the leads or subtract their resistance.':'Live test: measure with a loop tester at the furthest point of the circuit.'; }
+  const c=zsMaxFor(Object.assign({},F.vals,{zmax:''})), e=parseNum(F.vals.zmax), what=dead?'Max resistance':'Zs max';
+  el.textContent= isFinite(e)?('Using the '+what.toLowerCase()+' you entered ('+F.vals.zmax+' Ω).'+(c?' Calculated would be '+c.z+' Ω.':''))
+    : c?(what+' calculated: '+c.txt+' = '+c.z+' Ω. Type a max to override it.')
+    : (F.vals.curve==='MCCB'||F.vals.curve==='Fuse')?'MCCB / fuse / motor CB: enter the max from the maker\'s data or your copy of AS/NZS 3000 – it is not calculated.'
+    : 'Enter the rating and pick the curve (B/C/D) to calculate the max, or type it in.';
 }
 function openLimits(){
   const L=LIM(); const f=(id,label,hint)=>`<div class="field"><label for="l_${id}">${label}</label><input id="l_${id}" inputmode="decimal" value="${esc(L[id])}"><span class="hint">${hint}</span></div>`;
@@ -407,6 +413,7 @@ function openLimits(){
    ${f('mC','Type C trip multiple (× In)','')}
    ${f('mD','Type D trip multiple (× In)','')}
    ${f('zsFactor','Zs correction factor','1 = none. e.g. 0.8 to allow for a cold conductor')}
+   ${f('rphF','Dead-test factor','Dead test max = Zs max × this. 0.8 allows 20% for the supply')}
    ${f('rcd1','RCD max trip at 1× IΔn (ms)','')}
    ${f('rcd5','RCD max trip at 5× IΔn (ms)','')}
   </div><div class="actions"><button class="btn primary" type="submit">Save limits</button><button class="btn" type="button" id="lreset">Back to defaults</button><button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
@@ -615,8 +622,10 @@ function fieldsFor(a,sec){
     {id:'dev',label:'Protective device',type:'text',pre:a.prot},
     {id:'In',label:'Rating In (A)',type:'num',pre:parseProt(a.prot).In},
     {id:'curve',label:'Curve / type',type:'seg',opts:['B','C','D','MCCB','Fuse'],pre:parseProt(a.prot).curve},
-    {id:'zs',label:'Zs measured',type:'z'},
-    {id:'zmax',label:'Zs max – leave blank to calculate',type:'z'},
+    {id:'method',label:'Method',type:'seg',opts:['Live','Dead'],pre:'Live'},
+    {id:'zs',label:'Zs measured (live)',type:'z'},
+    {id:'rph',label:'Active + earth loop resistance (dead)',type:'z'},
+    {id:'zmax',label:'Max – leave blank to calculate',type:'z'},
     {id:'pfc',label:'PFC / PSCC (kA)',type:'num'}];
   if(k==='rcd') return [
     {id:'ma',label:'Rated IΔn',type:'seg',opts:['10mA','30mA','100mA','300mA'],pre:'30mA'},
@@ -657,8 +666,9 @@ function judge(a,sec,vals,na){
     if(x.type==='amp'){ const n=parseNum(v), fl=parseNum(a.flc); if(isFinite(n)&&isFinite(fl)&&fl>0&&n>fl) warn.push(x.label+' '+v+' A above FLC '+a.flc+' A'); }
   }
   if(sec.key.endsWith('.zs')){
-    const z=parseNum(vals.zs), zx=zsMaxFor(vals);
-    if(isFinite(z)&&zx&&z>zx.z) fail.push('Zs '+vals.zs+' Ω > max '+zx.z+' Ω'+(zx.src==='calc'?' (calculated '+zx.txt+')':''));
+    const dead=zsDead(vals), z=parseNum(dead?vals.rph:vals.zs), zx=zsMaxFor(vals), nm=dead?'Dead-test resistance ':'Zs ';
+    if(isFinite(z)&&zx&&z>zx.z) fail.push(nm+(dead?vals.rph:vals.zs)+' Ω > max '+zx.z+' Ω'+(zx.src==='calc'?' (calculated '+zx.txt+')':''));
+    else if(dead&&isFinite(z)&&zx&&z>zx.z*0.9) warn.push('Reading is within 10% of the '+zx.z+' Ω limit – confirm it, or retest live');
     else if(isFinite(z)&&!zx) warn.push('Enter Zs max to confirm disconnection time');
   }
   if(sec.key==='wr'){
@@ -1099,7 +1109,7 @@ function viewForm(a,key){
       <span class="hint" id="npmsg" style="align-self:center"></span></div>${S.canImg||S.assetsCap?camHint():''}<div class="photos" id="npphoto">${prev&&prev.photo?photoStrip([prev.photo],false):''}</div>`:''}
     ${hasIR?`<div class="actions"><button class="btn" type="button" data-act="fillIR">Set all IR to &gt;${esc(irMax())} MΩ</button><span class="hint" style="align-self:center">Pass ≥ ${IR_PASS} MΩ</span></div>`:''}
     ${key.endsWith('.ct')?`<div class="actions"><button class="btn primary" type="button" data-act="fillCont">✓ Tick continuity OK – all cores</button><span class="hint" style="align-self:center">Or enter readings. Pass ≤ ${CONT_PASS} Ω</span></div>`:fields.some(f=>f.type==='ohm')&&key!=='wr'?`<div class="hint">Pass ≤ ${CONT_PASS} Ω</div>`:''}
-    ${key.endsWith('.zs')?'<div class="hint">Test live at the furthest point of the circuit.</div><div class="hint" id="zsHint" style="font-weight:600"></div>':''}
+    ${key.endsWith('.zs')?'<div class="hint" id="zsHow"></div><div class="hint" id="zsHint" style="font-weight:600"></div>':''}
     ${key==='rcd'?`<div class="hint">Pass: 1× IΔn ≤ ${LIM().rcd1} ms, 5× IΔn ≤ ${LIM().rcd5} ms, no trip at ½ IΔn.</div>`:''}
     ${key==='fn'&&F.a.flc?'<div class="hint">FLC '+esc(F.a.flc)+' A – running current above this is flagged.</div>':''}
     ${hasCk?`<div class="checks">${fields.filter(f=>f.type==='ynna').map(fieldHtml).join('')}</div>
@@ -1131,7 +1141,7 @@ function fieldHtml(f){
 }
 function wireForm(){
   const form=$('#tform'); if(!form) return;
-  form.addEventListener('input',e=>{ const f=e.target.dataset&&e.target.dataset.f; if(f){F.vals[f]=e.target.value; markInput(e.target); if(f==='zmax'||f==='In'){const zi=form.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);}} if(e.target.id==='naChk'){F.na=e.target.checked;} updateResult(); });
+  form.addEventListener('input',e=>{ const f=e.target.dataset&&e.target.dataset.f; if(f){F.vals[f]=e.target.value; markInput(e.target); if(f==='zmax'||f==='In'){form.querySelectorAll('input[data-f="zs"],input[data-f="rph"]').forEach(markInput);}} if(e.target.id==='naChk'){F.na=e.target.checked;} updateResult(); });
   form.addEventListener('change',e=>{ if(e.target.id==='naChk'){F.na=e.target.checked; updateResult();} });
   form.addEventListener('submit',e=>{ e.preventDefault(); saveTest(); });
   form.querySelectorAll('input[data-f]').forEach(markInput); updateResult();
@@ -1156,7 +1166,7 @@ function markInput(el){
   if(t==='ir') el.classList.add(n<IR_PASS?'bad':'good');
   if(t==='ohm' && F.sec.key!=='wr') el.classList.add(n>CONT_PASS?'bad':'good');
   if(t==='ms'){ const f=F.fields.find(x=>x.id===el.dataset.f); if(f&&f.max) el.classList.add(n>f.max?'bad':'good'); }
-  if(t==='z' && el.dataset.f==='zs'){ const zx=zsMaxFor(F.vals); if(zx) el.classList.add(n>zx.z?'bad':'good'); }
+  if(t==='z' && (el.dataset.f==='zs'||el.dataset.f==='rph')){ const zx=zsMaxFor(F.vals); if(zx) el.classList.add(n>zx.z?'bad':'good'); }
 }
 function updateResult(){
   const j=judge(F.a,F.sec,F.vals,F.na); const el=$('#resultLine'); if(!el) return;
@@ -1171,6 +1181,7 @@ async function saveTest(){
   const j=judge(F.a,F.sec,F.vals,F.na);
   if(!j.result){ toast('Nothing entered yet'); return; }
   const vals={}; Object.entries(F.vals).forEach(([k,v])=>{ if(v!==''&&v!=null) vals[k]=String(v); });
+  if(F.sec.key.endsWith('.zs')){ if(zsDead(F.vals)){ delete vals.zs; delete vals.pfc; } else delete vals.rph; }
   if(F.sec.key.endsWith('.zs')&&!vals.zmax){ const zx=zsMaxFor(F.vals); if(zx){ vals.zmax=String(zx.z); vals.zmaxSrc='calculated '+zx.txt; } }
   const rec={job:S.job,asset:F.a.tag,board:F.a.board||'',section:F.sec.key,cable:F.sec.cable!=null?((F.a.cables||[])[F.sec.cable]||{}).no||'':'',
     values:vals,result:j.result,why:j.why,testerName:tester,licence:S.profile.licence||'',
@@ -1217,7 +1228,7 @@ function onClick(e){
   else if(act==='sec'){S.section=v;S.view='form';F=null;render();window.scrollTo(0,0);}
   else if(act==='group'){S.group=v;render();}
   else if(act==='status'){S.status=v;render();}
-  else if(act==='seg'){ const f=b.dataset.f; F.vals[f]= F.vals[f]===v?'':v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===F.vals[f])); {const zi=document.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);} updateResult(); }
+  else if(act==='seg'){ const f=b.dataset.f; F.vals[f]= F.vals[f]===v?'':v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===F.vals[f])); {document.querySelectorAll('input[data-f="zs"],input[data-f="rph"]').forEach(markInput);} updateResult(); }
   else if(act==='fillIR'){ const v='>'+irMax(); document.querySelectorAll('input[data-t="ir"]').forEach(i=>{i.value=v;F.vals[i.dataset.f]=v;markInput(i);}); updateResult(); }
   else if(act==='fillCont'){ document.querySelectorAll('input[data-t="ohm"]').forEach(i=>{i.value='OK';F.vals[i.dataset.f]='OK';markInput(i);}); updateResult(); }
   else if(act==='allY'){ F.fields.filter(f=>f.type==='ynna').forEach(f=>F.vals[f.id]='Y'); document.querySelectorAll('.checks .seg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v==='Y')); updateResult(); }
@@ -1719,7 +1730,7 @@ function cctResults(b,c){
   let irMin=''; if(ir&&ir.values){ const ns=Object.entries(ir.values).filter(([k])=>k!=='tv').map(([,v])=>v);
     const nums=ns.map(parseNum).filter(n=>!isNaN(n)); if(nums.length){ const m=Math.min(...nums); irMin=isFinite(m)?String(m):ns.find(v=>parseNum(v)===Infinity)||'>'; } }
   const dates=[ir,zs,rc,ct].filter(Boolean).map(t=>t.testDate||t.at||'').sort(); const res=[ir,zs,rc,ct].filter(Boolean);
-  return {zs:zs&&zs.values&&zs.values.zs||'',ir:irMin,rcd:rc&&rc.values&&rc.values.t1||'',ct:ct?(ct.result==='fail'?'FAIL':'OK'):'',
+  return {zs:zs&&zs.values&&(zs.values.zs||(zs.values.rph?zs.values.rph+' dead':''))||'',ir:irMin,rcd:rc&&rc.values&&rc.values.t1||'',ct:ct?(ct.result==='fail'?'FAIL':'OK'):'',
     date:dates.length?dates[dates.length-1]:'',by:res.length?res[res.length-1].testerName||'':'',fail:res.some(t=>t.result==='fail')};
 }
 function boardPdf(b){
