@@ -193,6 +193,9 @@ table.sum td.bad{color:var(--fail);font-weight:700} table.sum tr.click{cursor:po
 .days>div{display:grid;grid-template-rows:1fr auto auto;height:100%;justify-items:center;position:relative}
 .days span{align-self:end;width:70%;background:var(--part);border-radius:3px 3px 0 0;min-height:0}
 .days small{font-size:.7rem;color:var(--muted);position:absolute;top:0}.days em{font-style:normal;font-size:.7rem;color:var(--muted)}
+.dnotes{display:grid;gap:8px;border-left:3px solid var(--line);padding-left:10px;margin:4px 0}
+.tabbtn{white-space:nowrap;font-size:.95rem;padding-left:4px;padding-right:4px}
+@media (max-width:480px){.tabbtn{font-size:.8rem}}
 </style>
 </head>
 <body>
@@ -227,28 +230,30 @@ NET.ready=KV.get('pending').then(p=>{ if(Array.isArray(p)) NET.pending=p; });
 function setOffline(v){ if(S.offline===v) return; S.offline=v; if(!v){ S.stale=false; syncPending(); } if(S.view!=='form'&&S.view!=='dwg') render(); else netBanner(); }
 function netBanner(){ const el=document.getElementById('netbar'); if(el) el.outerHTML=netBarHtml(); }
 function netBarHtml(){
-  const mine=NET.pending.length, bad=NET.pending.filter(p=>p.err).length;
+  const mine=NET.pending.length, nd=NET.pending.filter(p=>p.table==='defects').length, bad=NET.pending.filter(p=>p.err).length;
   if(!S.offline&&!mine) return '<div id="netbar"></div>';
   return `<div id="netbar">${S.offline?`<div class="banner">📴 <b>Offline</b> – showing the copy saved on this device. Tests you save are kept here and upload when signal returns.</div>`:''}
-    ${mine?`<div class="banner${bad?' err':''}">${mine} test${mine===1?'':'s'} waiting to upload${bad?' – '+bad+' refused by the server ('+esc(NET.pending.find(p=>p.err).err)+'). Tell James.':'.'} <button class="btn" type="button" data-act="syncNow">Upload now</button></div>`:''}</div>`;
+    ${mine?`<div class="banner${bad?' err':''}">${mine} ${nd===mine?'defect update':nd?'item':'test'}${mine===1?'':'s'} waiting to upload${bad?' – '+bad+' refused by the server ('+esc(NET.pending.find(p=>p.err).err)+'). Tell James.':'.'} <button class="btn" type="button" data-act="syncNow">Upload now</button></div>`:''}</div>`;
 }
 function mergePending(){
   const srv=S.serverTests||[]; const ids=new Set(srv.map(t=>t._id));
-  S.tests=srv.concat(NET.pending.filter(p=>p.job===S.job&&!ids.has(p.id)).map(p=>Object.assign({_id:p.id,_pending:true},p.data)));
+  S.tests=srv.concat(NET.pending.filter(p=>p.table!=='defects'&&p.job===S.job&&!ids.has(p.id)).map(p=>Object.assign({_id:p.id,_pending:true},p.data)));
   rebuildLatest();
 }
+async function queueRow(row){ NET.pending=NET.pending.filter(p=>!(p.table==='defects'&&p.id===row.id)); NET.pending.push(row); if(!(await KV.set('pending',NET.pending))) throw {code:'storage_full'}; netBanner(); }
+function mergeDefPending(){ NET.pending.forEach(p=>{ if(p.table==='defects'&&p.job===S.job&&p.data&&p.data.key) S.defects[p.data.key]=p.data; }); }
 async function queueTest(row){ NET.pending.push(row); const ok=await KV.set('pending',NET.pending); mergePending(); if(!ok) throw {code:'storage_full'}; return {id:row.id,queued:true}; }
 async function syncPending(){
   if(NET.syncing||!NET.pending.length) return; NET.syncing=true; let sent=0;
   try{ const {data:{session}}=await sb.auth.getSession(); if(!session) return;
     for(const row of [...NET.pending]){
-      const {error:e}=await sb.from('tests').insert({id:row.id,job:row.job,data:row.data});
+      const {error:e}=row.table==='defects'?await sb.from('defects').upsert({id:row.id,job:row.job,data:row.data}):await sb.from('tests').insert({id:row.id,job:row.job,data:row.data});
       if(!e||e.code==='23505'){ NET.pending=NET.pending.filter(p=>p.id!==row.id); sent++; await KV.set('pending',NET.pending); }
       else if(errOf(e).code==='unavailable') break;
       else { row.err=e.message||e.code; await KV.set('pending',NET.pending); }
     }
   }catch(_){ }
-  finally{ NET.syncing=false; if(sent){ toast(sent+' saved test'+(sent===1?'':'s')+' uploaded'); NET.reloaders.forEach(f=>f()); } mergePending(); if(S.view!=='form'&&S.view!=='dwg') render(); else netBanner(); }
+  finally{ NET.syncing=false; if(sent){ toast(sent+' saved item'+(sent===1?'':'s')+' uploaded'); NET.reloaders.forEach(f=>f()); } mergePending(); if(S.view!=='form'&&S.view!=='dwg') render(); else netBanner(); }
 }
 window.addEventListener('online',()=>{ NET.reloaders.forEach(f=>f()); syncPending(); });
 window.addEventListener('offline',()=>{ if(typeof S!=='undefined'&&S.db) setOffline(true); });
@@ -670,7 +675,7 @@ function judge(a,sec,vals,na){
 /* ---------------- State ---------------- */
 const S={db:null,user:null,uid:null,canWrite:null,canEdit:false,dl:null,assetsCap:null,sample:null,canImg:false,
   jobs:{},job:null,assets:{},tests:[],latest:{},profile:{},view:'home',asset:null,section:null,boards:{},circuits:{},tab:'assets',board:null,backBoard:null,
-  drawings:{},dwg:null,dwgIx:{},dq:'',dwgShow:true,q:'',group:'All',status:'All',loaded:{a:false,t:false},stale:false,error:null,unsub:[]};
+  defects:{},dfilter:'open',dq2:'',drawings:{},dwg:null,dwgIx:{},dq:'',dwgShow:true,q:'',group:'All',status:'All',loaded:{a:false,t:false},stale:false,error:null,unsub:[]};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const idOf=(job,tag)=>(job+'~'+tag).replace(/[^A-Za-z0-9_\-.~:@+]+/g,'-').replace(/-+/g,'-').replace(/-$/,'');
@@ -723,7 +728,7 @@ async function init(){
   },e=>{ clearTimeout(timer); S.error='Could not load jobs ('+e.code+').'; render(); });
 }
 function switchJob(id){
-  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.serverTests=[]; S.latest={}; S.boards={}; S.circuits={}; S.drawings={}; S.dwgIx={}; S.loaded={a:false,t:false,b:false,d:false};
+  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.serverTests=[]; S.latest={}; S.boards={}; S.circuits={}; S.defects={}; S.drawings={}; S.dwgIx={}; S.loaded={a:false,t:false,b:false,d:false};
   try{ if(id) localStorage.setItem('nzes.job',id); }catch(e){}
   if(!id){ render(); return; }
   const t2=setTimeout(()=>{ S.stale=true; render(); },10000);
@@ -734,6 +739,9 @@ function switchJob(id){
   S.unsub.push(S.db.collection('boards').where('job','==',id).onSnapshot(snap=>{
     S.boards={}; snap.docs.forEach(d=>{const b=d.data(); b._id=d.id; S.boards[b.name]=b;}); rebuildCircuits(); S.loaded.b=true; render();
   },e=>{ S.error='Could not load DB schedules ('+e.code+').'; render(); }));
+  S.unsub.push(S.db.collection('defects').where('job','==',id).onSnapshot(snap=>{
+    S.defects={}; snap.docs.forEach(d=>{const x=d.data(); if(x&&x.key) S.defects[x.key]=x;}); mergeDefPending(); if(S.view!=='dwg') render();
+  },e=>{}));
   S.unsub.push(S.db.collection('drawings').where('job','==',id).onSnapshot(snap=>{
     S.drawings={}; snap.docs.forEach(d=>{const x=d.data(); x._id=d.id; S.drawings[d.id]=x;}); rebuildDwgIndex(); S.loaded.d=true; if(S.view!=='dwg') render();
   },e=>{ S.error='Could not load drawings ('+e.code+').'; render(); }));
@@ -785,6 +793,7 @@ function render(){
   else if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]){ body=viewDwg(); cls='full'; }
   else if(S.tab==='drawings') body=tabBar()+viewDrawings();
   else if(S.tab==='boards' && S.view==='board' && S.boards[S.board]){ body=tabBar()+viewBoard(S.boards[S.board]); cls='wide'; }
+  else if(S.tab==='defects') body=tabBar()+viewDefects();
   else if(S.tab==='summary'&&canSummary()){ body=tabBar()+viewSummary(); cls='wide'; }
   else if(S.tab==='boards') body=tabBar()+viewBoards();
   else body=tabBar()+viewHome();
@@ -795,6 +804,125 @@ function render(){
   if(S.view==='form') wireForm();
   if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) drawDwg();
 }
+
+/* ================= Defects =================
+   A failed test IS a defect: it opens when the test fails and closes itself when that test is redone and passes.
+   The defects table only holds what people add on top (owner, priority, notes, photos, manual close) and defects raised by hand. */
+function defectList(){
+  const out=[]; const byKey={};
+  S.tests.filter(t=>!t.voided).slice().sort((x,y)=>(x.at||'').localeCompare(y.at||'')).forEach(t=>{ (byKey[t.asset+'|'+t.section]=byKey[t.asset+'|'+t.section]||[]).push(t); });
+  for(const k in byKey){ let cur=null; for(const t of byKey[k]){
+    if(t.result==='fail'){ if(!cur){ cur={id:'F~'+t._id,kind:'test',asset:t.asset,section:t.section,first:t,last:t,at:t.at,by:t.testerName||''}; out.push(cur); } else cur.last=t; }
+    else if(cur){ cur.fixed=t; cur=null; } } }
+  out.forEach(d=>{ const a=A(d.asset); const sec=a&&sectionsFor(a).find(s=>s.key===d.section); d.title=(sec?sec.title:d.section)+' failed'; d.detail=d.last.why||''; d.desc=a?a.desc:''; });
+  Object.values(S.defects).forEach(o=>{ if(o.key&&o.key.startsWith('M~')) out.push({id:o.key,kind:'manual',asset:o.asset||'',title:o.title||'Defect',detail:o.detail||'',at:o.at,by:o.by||'',desc:(A(o.asset)||{}).desc||''}); });
+  out.forEach(d=>{ const o=S.defects[d.id]||{}; d.o=o; d.owner=o.owner||''; d.priority=o.priority||'Normal'; d.due=o.due||''; d.notes=o.notes||[]; d.photos=o.photos||[];
+    d.status= d.fixed?'closed': o.status==='closed'?'closed':'open';
+    d.closedHow= d.fixed?('Retest passed – '+(d.fixed.testerName||'')+', '+fmtDate(d.fixed.testDate||d.fixed.at)): o.status==='closed'?('Closed by '+(o.closedBy||'?')+', '+fmtDate(o.closedAt)+(o.closeNote?' – '+o.closeNote:'')):''; });
+  const pr={High:0,Normal:1,Low:2};
+  return out.sort((x,y)=>(x.status==='open'?0:1)-(y.status==='open'?0:1)||pr[x.priority]-pr[y.priority]||(y.at||'').localeCompare(x.at||''));
+}
+const openDefects=()=>defectList().filter(d=>d.status==='open');
+async function saveDefect(key,patch){
+  const cur=S.defects[key]||{key,job:S.job}; const rec=Object.assign({},cur,patch,{key,job:S.job,updatedAt:new Date().toISOString(),updatedBy:S.profile.name||S.email||''}); delete rec._id;
+  const id=idOf(S.job,'DEF~'+key); S.defects[key]=rec;
+  const row={table:'defects',id,job:S.job,data:rec};
+  if(navigator.onLine===false||S.noSession){ await queueRow(row); return {queued:true}; }
+  const {error:e}=await withTimeout(sb.from('defects').upsert({id,job:S.job,data:rec}),10000);
+  if(!e) return {};
+  if(errOf(e).code==='unavailable'){ setOffline(true); await queueRow(row); return {queued:true}; }
+  throw errOf(e);
+}
+function viewDefects(){
+  const all=defectList(); const f=S.dfilter||'open'; const q=(S.dq2||'').trim().toLowerCase();
+  const list=all.filter(d=>(f==='all'||d.status===f||(f==='mine'&&d.status==='open'&&d.owner&&S.profile.name&&d.owner.toLowerCase()===S.profile.name.toLowerCase()))&&(!q||[d.asset,d.title,d.detail,d.owner,d.desc].join(' ').toLowerCase().includes(q)));
+  const n={open:all.filter(d=>d.status==='open').length,closed:all.filter(d=>d.status==='closed').length};
+  return `<div class="actions"><button class="btn primary" type="button" data-act="defNew">+ Raise a defect</button><button class="btn" type="button" data-act="defCsv" ${all.length?'':'disabled'}>Export defects CSV</button></div>
+  <input class="search" id="dq2" type="search" placeholder="Search tag, description or owner" value="${esc(S.dq2||'')}" autocomplete="off">
+  <div class="chips" role="group" aria-label="Status">${[['open','Open ('+n.open+')'],['mine','Mine'],['closed','Closed ('+n.closed+')'],['all','All']].map(([k,l])=>`<button class="chip" type="button" data-act="defFilter" data-v="${k}" aria-pressed="${f===k}">${l}</button>`).join('')}</div>
+  <div class="list">${list.map(defRow).join('')||`<div class="card hint">${f==='open'?'No open defects. A failed test shows up here automatically.':'Nothing to show.'}</div>`}</div>
+  <p class="hint">A failed test opens a defect automatically and closes it when the retest passes. Use “Raise a defect” for anything else – a missing gland, damage, a label.</p>`;
+}
+function defRow(d){
+  const age=d.at?Math.max(0,Math.floor((Date.now()-new Date(d.at))/864e5)):0; const over=d.status==='open'&&d.due&&d.due<today();
+  return `<button class="row s-${d.status==='open'?'fail':'done'}" type="button" data-act="defOpen" data-v="${esc(d.id)}"><span class="stripe"></span>
+    <span><span class="t1">${d.asset?`<span class="tag">${esc(d.asset)}</span>`:''}<span class="d">${esc(d.title)}</span></span>
+    <span class="d" style="display:block;color:var(--ink)">${esc(d.detail||d.desc||'')}</span>
+    <span class="d">${d.status==='open'?`${d.owner?'Owner: '+esc(d.owner):'No owner'} · raised ${age===0?'today':age+' d ago'}${d.by?' by '+esc(d.by):''}${d.due?' · due '+esc(fmtDate(d.due)):''}${d.notes.length?' · '+d.notes.length+' note'+(d.notes.length===1?'':'s'):''}${d.photos.length?' · 📷'+d.photos.length:''}`:esc(d.closedHow)}</span></span>
+    <span style="display:grid;gap:4px;justify-items:end"><span class="pill p-${d.status==='open'?'fail':'done'}">${d.status==='open'?'Open':'Closed'}</span>${d.status==='open'&&d.priority!=='Normal'?`<span class="pill p-${d.priority==='High'?'warn':'na'}">${d.priority}</span>`:''}${over?'<span class="pill p-fail">Overdue</span>':''}</span></button>`;
+}
+function openDefect(id){
+  const d=defectList().find(x=>x.id===id); if(!d){ closeModal(); return; } const o=d.o; const isOpen=d.status==='open';
+  modal(`<h2>${d.asset?`<span class="tag">${esc(d.asset)}</span> `:''}${esc(d.title)}</h2>
+   <p><span class="pill p-${isOpen?'fail':'done'}">${isOpen?'Open':'Closed'}</span> <span class="hint">${isOpen?'Raised '+esc(fmtDate(d.at))+(d.by?' by '+esc(d.by):''):esc(d.closedHow)}</span></p>
+   ${d.desc?`<div class="hint">${esc(d.desc)}</div>`:''}${d.detail?`<div style="margin:6px 0;font-weight:600">${esc(d.detail)}</div>`:''}
+   ${d.kind==='test'&&isOpen?'<p class="hint">Closes by itself when this test is redone and passes.</p>':''}
+   <form id="dform" class="test"><div class="fgrid">
+     <div class="field"><label for="d_owner">Owner</label><input id="d_owner" value="${esc(d.owner)}" placeholder="Who is fixing it"></div>
+     <div class="field"><label for="d_pri">Priority</label><select id="d_pri">${['High','Normal','Low'].map(p=>`<option ${p===d.priority?'selected':''}>${p}</option>`).join('')}</select></div>
+     <div class="field"><label for="d_due">Fix by</label><input id="d_due" type="date" value="${esc(d.due)}"></div></div>
+     ${d.notes.length?`<div class="dnotes">${d.notes.map(n=>`<div><b>${esc(n.by||'')}</b> <span class="hint">${esc(fmtDate(n.at))}</span><div>${esc(n.text)}</div></div>`).join('')}</div>`:''}
+     <div class="field"><label for="d_note">Add a note</label><textarea id="d_note" rows="2" placeholder="What was found, what was done"></textarea></div>
+     ${d.photos.length?`<div class="photos">${photoStrip(d.photos,false)}</div>`:''}
+     <div class="actions">${S.assetsCap?'<label class="camlabel" for="d_cam">📷 Add photo<input id="d_cam" type="file" accept="image/*" capture="environment"></label>':''}<span class="hint" id="d_msg" style="align-self:center"></span></div>
+     <div class="actions"><button class="btn primary" type="submit">Save</button>
+       ${d.kind==='test'&&isOpen&&A(d.asset)?`<button class="btn" type="button" data-act="defRetest" data-v="${esc(d.id)}">Retest now</button>`:''}
+       ${d.asset&&A(d.asset)?`<button class="btn" type="button" data-act="open" data-v="${esc(d.asset)}">Open asset</button>`:''}
+       ${isOpen&&(d.kind==='manual'||S.canEdit)?`<button class="btn" type="button" data-act="defClose" data-v="${esc(d.id)}">${d.kind==='manual'?'Close defect':'Close without retest'}</button>`:''}
+       ${!isOpen&&!d.fixed?`<button class="btn" type="button" data-act="defReopen" data-v="${esc(d.id)}">Reopen</button>`:''}
+       <button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
+  const collect=()=>{ const p={owner:$('#d_owner').value.trim(),priority:$('#d_pri').value,due:$('#d_due').value}; const t=$('#d_note').value.trim(); if(t) p.notes=(o.notes||[]).concat([{at:new Date().toISOString(),by:S.profile.name||S.email||'',text:t}]); return p; };
+  const done=(r,msg)=>{ toast(r&&r.queued?'Saved on this device – uploads when signal returns':msg); closeModal(); render(); };
+  $('#dform').addEventListener('submit',async e=>{ e.preventDefault(); try{ done(await saveDefect(d.id,collect()),'Defect updated'); }catch(err){ toast('Could not save ('+(err.code||'error')+')'); } });
+  const cam=$('#d_cam'); if(cam) cam.addEventListener('change',async e=>{ const f=(e.target.files||[])[0]; e.target.value=''; if(!f) return; $('#d_msg').textContent='Uploading photo…';
+    try{ const blob=await shrinkImage(f); const r=await S.assetsCap.upload(blob,{type:'image/jpeg'}); const p=collect(); p.photos=(o.photos||[]).concat([r.id]); await saveDefect(d.id,p); openDefect(d.id); }
+    catch(err){ $('#d_msg').textContent='Photo needs signal – not added'; } });
+  DEF_CTX={id:d.id,collect,done,d};
+}
+let DEF_CTX=null;
+async function defAction(act,id){
+  const c=DEF_CTX; const d=c&&c.id===id?c.d:defectList().find(x=>x.id===id); if(!d) return;
+  try{
+    if(act==='defRetest'){ if(c&&c.id===id){ const p=c.collect(); if(p.notes||p.owner!==d.owner||p.priority!==d.priority||p.due!==d.due) await saveDefect(id,p); } closeModal(); S.backBoard=null; S.asset=d.asset; S.section=d.section; S.view='form'; F=null; render(); window.scrollTo(0,0); }
+    else if(act==='defClose'){ const p=c&&c.id===id?c.collect():{}; const note=(p.notes&&p.notes[p.notes.length-1].text)||''; if(d.kind==='test'&&!note){ toast('Add a note saying why it is closed without a retest'); const n=$('#d_note'); if(n) n.focus(); return; }
+      Object.assign(p,{status:'closed',closedBy:S.profile.name||S.email||'',closedAt:new Date().toISOString(),closeNote:note}); c?c.done(await saveDefect(id,p),'Defect closed'):await saveDefect(id,p); }
+    else if(act==='defReopen'){ const r=await saveDefect(id,{status:'open'}); c?c.done(r,'Defect reopened'):0; }
+  }catch(err){ toast('Could not save ('+(err.code||'error')+')'); }
+}
+function openDefNew(tag){
+  modal(`<h2>Raise a defect</h2><form id="dnform" class="test">
+    <div class="field"><label for="dn_title">What is wrong</label><input id="dn_title" placeholder="e.g. Gland missing on motor terminal box" required></div>
+    <div class="field"><label for="dn_detail">Details</label><textarea id="dn_detail" rows="2"></textarea></div>
+    <div class="fgrid"><div class="field"><label for="dn_asset">Asset or circuit tag (optional)</label><input id="dn_asset" list="dn_tags" value="${esc(tag||'')}"><datalist id="dn_tags">${Object.keys(S.assets).slice(0,600).map(t=>`<option value="${esc(t)}">`).join('')}</datalist></div>
+     <div class="field"><label for="dn_owner">Owner</label><input id="dn_owner" placeholder="Who is fixing it"></div>
+     <div class="field"><label for="dn_pri">Priority</label><select id="dn_pri"><option>High</option><option selected>Normal</option><option>Low</option></select></div></div>
+    <div class="actions">${S.assetsCap?'<label class="camlabel" for="dn_cam">📷 Add photo<input id="dn_cam" type="file" accept="image/*" capture="environment"></label>':''}<span class="hint" id="dn_msg" style="align-self:center"></span></div>
+    <div class="actions"><button class="btn primary" type="submit">Raise defect</button><button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
+  let photos=[]; const cam=$('#dn_cam'); if(cam) cam.addEventListener('change',async e=>{ const f=(e.target.files||[])[0]; e.target.value=''; if(!f) return; $('#dn_msg').textContent='Uploading photo…';
+    try{ const r=await S.assetsCap.upload(await shrinkImage(f),{type:'image/jpeg'}); photos.push(r.id); $('#dn_msg').textContent=photos.length+' photo'+(photos.length===1?'':'s')+' attached'; }catch(err){ $('#dn_msg').textContent='Photo needs signal – not added'; } });
+  $('#dnform').addEventListener('submit',async e=>{ e.preventDefault(); const title=$('#dn_title').value.trim(); if(!title) return; const asset=$('#dn_asset').value.trim();
+    try{ const r=await saveDefect('M~'+crypto.randomUUID(),{title,detail:$('#dn_detail').value.trim(),asset,owner:$('#dn_owner').value.trim(),priority:$('#dn_pri').value,photos,status:'open',at:new Date().toISOString(),by:S.profile.name||S.email||''});
+      toast(r.queued?'Saved on this device – uploads when signal returns':'Defect raised'); closeModal(); render(); }catch(err){ toast('Could not save ('+(err.code||'error')+')'); } });
+}
+function defStripForAsset(a){
+  const ds=openDefects().filter(d=>d.asset===a.tag); if(!ds.length) return '';
+  return `<div class="card" style="border-color:var(--fail)"><h3>Open defects (${ds.length})</h3><div class="list">${ds.map(defRow).join('')}</div></div>`;
+}
+function defCsv(){
+  const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+  const rows=[['status','tag','description','defect','detail','priority','owner','fix_by','raised','raised_by','closed','notes']].concat(defectList().map(d=>[d.status,d.asset,d.desc,d.title,d.detail,d.priority,d.owner,d.due,(d.at||'').slice(0,10),d.by,d.closedHow,d.notes.map(n=>(n.by||'')+': '+n.text).join(' | ')]));
+  download(S.job+'_defects.csv',rows.map(r=>r.map(q).join(',')).join('\r\n'));
+}
+function defClick(act,b){
+  const v=b.dataset.v;
+  if(act==='defOpen'){ openDefect(v); return true; }
+  if(act==='defNew'){ openDefNew(S.view==='asset'&&A(S.asset)?S.asset:''); return true; }
+  if(act==='defFilter'){ S.dfilter=v; render(); return true; }
+  if(act==='defCsv'){ defCsv(); return true; }
+  if(act==='defRetest'||act==='defClose'||act==='defReopen'){ defAction(act,v); return true; }
+  return false;
+}
+document.addEventListener('input',e=>{ if(e.target.id==='dq2'){ S.dq2=e.target.value; const pos=e.target.selectionStart; render(); const q=$('#dq2'); if(q){q.focus(); try{q.setSelectionRange(pos,pos);}catch(_){}} } });
 
 /* ================= Job summary (admins + people an admin lists for the job) ================= */
 function canSummary(){ if(!WIDE()) return false;   // computer only – phones stay on the site-work tabs
@@ -916,7 +1044,7 @@ function viewAsset(a){
   const sl={};secs.forEach(s=>sl[s.key]=s);
   return `
   <div class="actions">${a.kind==='circuit'?`<button class="btn" type="button" data-act="board" data-v="${esc(a.board)}">← ${esc(a.board)} schedule</button>`:`${S.backBoard&&S.boards[S.backBoard]?`<button class="btn" type="button" data-act="board" data-v="${esc(S.backBoard)}">← ${esc(S.backBoard)} schedule</button>`:''}<button class="btn" type="button" data-act="home">← All assets</button>`}
-    <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>${dwgButtonForAsset(a)}
+    <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>${dwgButtonForAsset(a)}<button class="btn" type="button" data-act="defNew">Raise a defect</button>
     ${S.canEdit&&a.kind!=='circuit'?'<button class="btn" type="button" data-act="editDev">Edit device</button>':''}${S.canEdit&&a.kind==='circuit'?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(a.board)}">Edit schedule</button>`:''}</div>
   <div class="card">
     <div class="sechead"><h2><span class="tag">${esc(a.tag)}</span></h2><span class="pill p-${st.st}">${ST_LABEL[st.st]} · ${st.done}/${st.total}</span></div>
@@ -930,6 +1058,7 @@ function viewAsset(a){
     ${a.photos&&a.photos.length?`<div class="photos">${photoStrip(a.photos,false)}</div>`:''}
     ${a.notes&&a.notes.length?`<ul class="flags">${a.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}
   </div>
+  ${defStripForAsset(a)}
   ${Object.entries(groups).map(([g,ss])=>`
     <div class="sechead"><h3>${esc(g)}</h3>${ss[0].cable!=null&&a.cables&&a.cables[ss[0].cable]?`<small>${esc([a.cables[ss[0].cable].type,a.cables[ss[0].cable].size&&a.cables[ss[0].cable].size+'mm²',a.cables[ss[0].cable].len&&a.cables[ss[0].cable].len+'m'].filter(Boolean).join(' · '))}</small>`:''}</div>
     <div class="tiles">${ss.map(s=>{const t=S.latest[a.tag+'|'+s.key];
@@ -1050,7 +1179,7 @@ async function saveTest(){
   btn.disabled=true; btn.textContent='Saving…';
   try{
     const r=await S.db.collection('tests').add(rec);
-    toast(r.queued?'Saved on this device – uploads when signal returns':j.result==='fail'?'Saved – FAIL recorded':'Saved'); S.view='asset'; render();
+    toast(r.queued?'Saved on this device – uploads when signal returns':j.result==='fail'?'Saved – FAIL recorded and added to Defects':'Saved'); S.view='asset'; render();
   }catch(e){
     btn.disabled=false; btn.textContent='Save test';
     if(e.code==='invalid_argument'){ toast('You do not have permission to save – ask James.'); }
@@ -1067,6 +1196,7 @@ function onClick(e){
   const b=e.target.closest('[data-act]'); if(!b) return;
   const act=b.dataset.act, v=b.dataset.v;
   if(dwgClick(act,b)) return;
+  if(defClick(act,b)) return;
   if(act==='open'||act==='board') closeModal();
   if(act==='open'){S.backBoard=(S.tab==='boards'&&S.view==='board')?S.board:(b.closest('#paneL')&&S.paneBoard)||null; S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
   else if(act==='home'){S.view='home';S.tab='assets';S.backBoard=null;render();}
@@ -1478,7 +1608,7 @@ function boardSummary(b){
 }
 function tabBar(){
   const nb=Object.keys(S.boards).length;
-  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab==='assets'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="drawings" aria-selected="${S.tab==='drawings'}">Drawings${Object.keys(S.drawings).length?' ('+Object.keys(S.drawings).length+')':''}</button>${canSummary()?`<button class="tabbtn" role="tab" type="button" data-act="tab" data-v="summary" aria-selected="${S.tab==='summary'}">Summary</button>`:''}</div>`;
+  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab==='assets'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="drawings" aria-selected="${S.tab==='drawings'}">Drawings${Object.keys(S.drawings).length?' ('+Object.keys(S.drawings).length+')':''}</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="defects" aria-selected="${S.tab==='defects'}">Defects${(n=>n?' ('+n+')':'')(openDefects().length)}</button>${canSummary()?`<button class="tabbtn" role="tab" type="button" data-act="tab" data-v="summary" aria-selected="${S.tab==='summary'}">Summary</button>`:''}</div>`;
 }
 function viewBoards(){
   if(S.loaded && S.loaded.b===false) return `<div class="card"><h2>Loading schedules…</h2></div>`;
