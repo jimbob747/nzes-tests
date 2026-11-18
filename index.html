@@ -1274,7 +1274,7 @@ function viewAsset(a){
       </button>`;}).join('')}</div>`).join('')}
   <div class="card"><h3>History</h3>
    ${hist.length?`<div class="tablewrap"><table class="hist"><thead><tr><th>Date</th><th>Test</th><th>By</th><th>Result</th><th>Values</th>${S.canEdit?'<th></th>':''}</tr></thead><tbody>
-   ${hist.map(t=>{const s=sl[t.section]; return `<tr style="${t.voided?'opacity:.5;text-decoration:line-through':''}"><td>${esc(fmtDate(t.testDate||t.at))}</td><td>${esc(s?(s.group.startsWith('Cable')&&secs.filter(x=>x.cable!=null).length>3?s.group.split(':')[0]+' ':'')+s.title:t.section)}</td><td>${esc(t.testerName||'')}</td><td>${esc(t.result||'')}</td><td class="v">${esc(s?valSummary(a,s,t):'')}${t.notes?' – '+esc(t.notes):''}</td>${S.canEdit&&!t.voided?`<td><button class="btn danger" type="button" data-act="void" data-v="${esc(t._id)}">Void</button></td>`:S.canEdit?'<td></td>':''}</tr>`}).join('')}
+   ${hist.map(t=>{const s=sl[t.section]; return `<tr style="${t.voided?'opacity:.5;text-decoration:line-through':''}"><td>${esc(fmtDate(t.testDate||t.at))}</td><td>${esc(s?(s.group.startsWith('Cable')&&secs.filter(x=>x.cable!=null).length>3?s.group.split(':')[0]+' ':'')+s.title:t.section)}</td><td>${esc(t.testerName||'')}</td><td>${esc(t.result||'')}</td><td class="v">${esc(s?valSummary(a,s,t):'')}${t.notes?' – '+esc(t.notes):''}${S.canEdit&&t.officeNotes?`<div class="hint">Office note (not printed): ${esc(t.officeNotes)}</div>`:''}</td>${S.canEdit&&!t.voided?`<td><button class="btn danger" type="button" data-act="void" data-v="${esc(t._id)}">Void</button></td>`:S.canEdit?'<td></td>':''}</tr>`}).join('')}
    </tbody></table></div>`:'<p class="hint">No tests recorded yet. Each test you save is kept here with who did it and when; the test sheet always uses the latest one.</p>'}
   </div>`;
 }
@@ -1316,6 +1316,7 @@ function viewForm(a,key){
       <div class="field"><label for="f_ser">Instrument serial</label><input id="f_ser" value="${esc(LAST.ser||P.serial||'')}"></div>`:''}
     </div>
     <div class="field"><label for="f_notes">Notes</label><textarea id="f_notes" rows="2" placeholder="Anything the next person needs to know">${esc(prev&&prev.notes||'')}</textarea></div>
+    ${S.canEdit?`<div class="field office"><label for="f_onotes">Office note (never printed on test sheets)</label><textarea id="f_onotes" rows="2">${esc(prev&&prev.officeNotes||'')}</textarea></div>`:''}
     <label class="hint" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="naChk" ${F.na?'checked':''}> Not applicable to this asset (say why in notes)</label>
     <div class="result" id="resultLine"></div>
     <button class="btn primary big" type="submit" id="saveBtn" ${S.canWrite===false?'disabled':''}>Save test</button>
@@ -1382,7 +1383,7 @@ async function saveTest(){
   const rec={job:S.job,asset:F.a.tag,board:F.a.board||'',section:F.sec.key,cable:F.sec.cable!=null?((F.a.cables||[])[F.sec.cable]||{}).no||'':'',
     values:vals,result:j.result,why:j.why,testerName:tester,licence:S.profile.licence||'',
     instrument:$('#f_inst')?$('#f_inst').value.trim():'',serial:$('#f_ser')?$('#f_ser').value.trim():'',calDue:S.profile.calDue||'',
-    limits:LIM(),testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),isolated:iso?iso.checked:null};
+    limits:LIM(),testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),officeNotes:$('#f_onotes')?$('#f_onotes').value.trim():'',isolated:iso?iso.checked:null};
   btn.disabled=true; btn.textContent='Saving…';
   try{
     const r=await S.db.collection('tests').add(rec);
@@ -1704,10 +1705,10 @@ async function download(name,data){
   catch(e){ if(e.code!=='declined') toast('Download failed ('+e.code+')'); }
 }
 function exportCsv(){
-  const head=['job','asset','description','test','cable','result','test_date','tested_by','registration','instrument','serial','values','notes','saved_at'];
+  const head=['job','asset','description','test','cable','result','test_date','tested_by','registration','instrument','serial','values','notes','office_notes','saved_at'];
   const rows=[];
   Object.values(S.assets).forEach(a=>sectionsFor(a).forEach(s=>{ const t=S.latest[a.tag+'|'+s.key];
-    rows.push([S.job,a.tag,a.desc,s.group+' – '+s.title,t?t.cable:'',t?t.result:'not done',t?t.testDate:'',t?t.testerName:'',t?t.licence:'',t?t.instrument:'',t?t.serial:'',t?Object.entries(t.values||{}).map(([k,v])=>k+'='+v).join('; '):'',t?t.notes:'',t?t.at:'']); }));
+    rows.push([S.job,a.tag,a.desc,s.group+' – '+s.title,t?t.cable:'',t?t.result:'not done',t?t.testDate:'',t?t.testerName:'',t?t.licence:'',t?t.instrument:'',t?t.serial:'',t?Object.entries(t.values||{}).map(([k,v])=>k+'='+v).join('; '):'',t?t.notes:'',t?(t.officeNotes||''):'',t?t.at:'']); }));
   download(S.job+' test results '+today()+'.csv',toCsv([head,...rows]));
 }
 
