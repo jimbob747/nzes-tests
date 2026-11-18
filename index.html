@@ -42,9 +42,9 @@ h1,h2,h3{font-family:var(--display);margin:0;letter-spacing:.01em;text-wrap:bala
 .top{position:sticky;top:0;z-index:5;background:var(--steel);color:#fff;padding:10px 16px;display:flex;gap:12px;align-items:center}
 :root[data-theme="dark"] .top{background:#14283d}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .top{background:#14283d}}
-.top h1{font-size:1.35rem;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.top h1{font-size:1.35rem;flex:1 1 auto;min-width:5.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .top h1 small{font-family:var(--body);font-weight:500;font-size:.8rem;opacity:.85;margin-left:8px}
-.top select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:6px 8px;max-width:46vw}
+.top select{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:6px 8px;max-width:62vw;min-width:0;text-overflow:ellipsis}
 .top select option{color:#000}
 .iconbtn{background:transparent;border:1px solid rgba(255,255,255,.35);color:#fff;border-radius:8px;padding:6px 10px;cursor:pointer}
 main{max-width:860px;margin:0 auto;padding:14px 16px 90px;display:grid;gap:14px}
@@ -712,9 +712,9 @@ function switchJob(id){
 }
 function renderJobs(){
   const sel=$('#jobsel'); const ids=Object.keys(S.jobs).sort();
-  sel.innerHTML=ids.map(i=>`<option value="${esc(i)}" ${i===S.job?'selected':''}>${esc(i)}</option>`).join('') + (S.canEdit?'<option value="__new">+ New job…</option>':'');
+  sel.innerHTML=ids.map(i=>`<option value="${esc(i)}" ${i===S.job?'selected':''}>${esc(i+(S.jobs[i].name&&S.jobs[i].name!==i?' – '+S.jobs[i].name:''))}</option>`).join('') + (S.canEdit?'<option value="__new">+ New job…</option>':'');
   sel.style.display=ids.length||S.canEdit?'':'none';
-  $('#jobname').textContent = S.job&&S.jobs[S.job]? S.jobs[S.job].name : (ids.length?'':'No jobs yet');
+  $('#jobname').textContent = S.job&&S.jobs[S.job]? '' : (ids.length?'':'No jobs yet');
 }
 
 /* ---------------- Rendering ---------------- */
