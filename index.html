@@ -142,6 +142,25 @@ table.sched tr.s-fail td:first-child{box-shadow:inset 4px 0 var(--fail)} table.s
 table.sched .tag.small{font-size:.75rem;opacity:.8}
 table.sched .warnnote{color:var(--warn);font-size:.8rem}
 table.sched.edit td{padding:4px} table.sched.edit input,table.sched.edit select{font:inherit;font-size:.9rem;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
+
+/* drawings */
+.dwgbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+.dwgbar select{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);max-width:min(100%,360px)}
+.dwgtog{display:flex;gap:6px;align-items:center}
+.dwghead{margin:2px 0 6px}
+.dwgwrap{overflow:auto;max-height:calc(100vh - 170px);background:#fff;border:1px solid var(--line);border-radius:8px;-webkit-overflow-scrolling:touch}
+.dwgstage{position:relative;margin:0 auto;min-height:200px}
+.dwgstage canvas{display:block}
+.dwgload{padding:30px;color:#555}
+.dlink{position:absolute;padding:0;border:1.5px solid rgba(242,169,0,.85);background:rgba(242,169,0,.12);border-radius:3px;cursor:pointer}
+.dlink.lt{border-color:rgba(30,138,76,.9);background:rgba(30,138,76,.12)}
+.dlink.lx{border-color:rgba(47,111,181,.9);background:rgba(47,111,181,.12)}
+.dlink.lb{border-color:rgba(36,65,95,.9);background:rgba(36,65,95,.1)}
+.dlink.lu{border-style:dashed}
+.dlink.hide{border-color:transparent;background:transparent}
+.dlink.hl{border:3px solid #e0115f;background:rgba(224,17,95,.15);animation:dpulse 1.2s ease-in-out 3}
+@keyframes dpulse{50%{box-shadow:0 0 0 8px rgba(224,17,95,.25)}}
+.dwgcol{position:absolute;top:0;bottom:0;background:rgba(47,111,181,.10);border-left:2px solid rgba(47,111,181,.5);border-right:2px solid rgba(47,111,181,.5);pointer-events:none}
 </style>
 </head>
 <body>
@@ -417,7 +436,7 @@ function judge(a,sec,vals,na){
 /* ---------------- State ---------------- */
 const S={db:null,user:null,uid:null,canWrite:null,canEdit:false,dl:null,assetsCap:null,sample:null,canImg:false,
   jobs:{},job:null,assets:{},tests:[],latest:{},profile:{},view:'home',asset:null,section:null,boards:{},circuits:{},tab:'assets',board:null,backBoard:null,
-  q:'',group:'All',status:'All',loaded:{a:false,t:false},stale:false,error:null,unsub:[]};
+  drawings:{},dwg:null,dwgIx:{},dq:'',dwgShow:true,q:'',group:'All',status:'All',loaded:{a:false,t:false},stale:false,error:null,unsub:[]};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const idOf=(job,tag)=>(job+'~'+tag).replace(/[^A-Za-z0-9_\-.~:@+]+/g,'-').replace(/-+/g,'-').replace(/-$/,'');
@@ -461,17 +480,20 @@ async function init(){
   },e=>{ clearTimeout(timer); S.error='Could not load jobs ('+e.code+').'; render(); });
 }
 function switchJob(id){
-  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.latest={}; S.boards={}; S.circuits={}; S.loaded={a:false,t:false,b:false};
+  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.latest={}; S.boards={}; S.circuits={}; S.drawings={}; S.dwgIx={}; S.loaded={a:false,t:false,b:false,d:false};
   try{ if(id) localStorage.setItem('nzes.job',id); }catch(e){}
   if(!id){ render(); return; }
   const t2=setTimeout(()=>{ S.stale=true; render(); },10000);
   S.unsub.push(S.db.collection('assets').where('job','==',id).onSnapshot(snap=>{
     if(!snap.metadata.fromCache){ clearTimeout(t2); S.stale=false; }
-    S.assets={}; snap.docs.forEach(d=>{const a=d.data(); S.assets[a.tag]=a;}); S.loaded.a=true; rebuildCircuits(); render();
+    S.assets={}; snap.docs.forEach(d=>{const a=d.data(); S.assets[a.tag]=a;}); S.loaded.a=true; rebuildCircuits(); rebuildDwgIndex(); render();
   },e=>{ S.error='Could not load assets ('+e.code+').'; render(); }));
   S.unsub.push(S.db.collection('boards').where('job','==',id).onSnapshot(snap=>{
     S.boards={}; snap.docs.forEach(d=>{const b=d.data(); b._id=d.id; S.boards[b.name]=b;}); rebuildCircuits(); S.loaded.b=true; render();
   },e=>{ S.error='Could not load DB schedules ('+e.code+').'; render(); }));
+  S.unsub.push(S.db.collection('drawings').where('job','==',id).onSnapshot(snap=>{
+    S.drawings={}; snap.docs.forEach(d=>{const x=d.data(); x._id=d.id; S.drawings[d.id]=x;}); rebuildDwgIndex(); S.loaded.d=true; if(S.view!=='dwg') render();
+  },e=>{ S.error='Could not load drawings ('+e.code+').'; render(); }));
   S.unsub.push(S.db.collection('tests').where('job','==',id).onSnapshot(snap=>{
     S.tests=snap.docs.map(d=>Object.assign({_id:d.id},d.data())); S.loaded.t=true; rebuildLatest(); render();
   },e=>{ S.error='Could not load test results ('+e.code+').'; render(); }));
@@ -509,11 +531,14 @@ function render(){
   else if(S.view==='asset' && A(S.asset)) body=viewAsset(A(S.asset));
   else if(S.view==='form' && A(S.asset)) body=viewForm(A(S.asset),S.section);
   else if(S.view==='boardEdit' && E) body=viewBoardEdit();
+  else if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) body=viewDwg();
+  else if(S.tab==='drawings') body=tabBar()+viewDrawings();
   else if(S.tab==='boards' && S.view==='board' && S.boards[S.board]) body=tabBar()+viewBoard(S.boards[S.board]);
   else if(S.tab==='boards') body=tabBar()+viewBoards();
   else body=tabBar()+viewHome();
   m.innerHTML=top.join('')+body;
   if(S.view==='form') wireForm();
+  if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) drawDwg();
 }
 
 function filteredAssets(){
@@ -577,7 +602,7 @@ function viewAsset(a){
   const sl={};secs.forEach(s=>sl[s.key]=s);
   return `
   <div class="actions">${a.kind==='circuit'?`<button class="btn" type="button" data-act="board" data-v="${esc(a.board)}">← ${esc(a.board)} schedule</button>`:`${S.backBoard&&S.boards[S.backBoard]?`<button class="btn" type="button" data-act="board" data-v="${esc(S.backBoard)}">← ${esc(S.backBoard)} schedule</button>`:''}<button class="btn" type="button" data-act="home">← All assets</button>`}
-    <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>
+    <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>${dwgButtonForAsset(a)}
     ${S.canEdit&&a.kind!=='circuit'?'<button class="btn" type="button" data-act="editDev">Edit device</button>':''}${S.canEdit&&a.kind==='circuit'?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(a.board)}">Edit schedule</button>`:''}</div>
   <div class="card">
     <div class="sechead"><h2><span class="tag">${esc(a.tag)}</span></h2><span class="pill p-${st.st}">${ST_LABEL[st.st]} · ${st.done}/${st.total}</span></div>
@@ -724,9 +749,11 @@ function onClick(e){
   const ph=e.target.closest('img[data-photo]'); if(ph && !e.target.closest('#dform')){ viewPhoto(ph.dataset.photo); return; }
   const b=e.target.closest('[data-act]'); if(!b) return;
   const act=b.dataset.act, v=b.dataset.v;
+  if(dwgClick(act,b)) return;
+  if(act==='open'||act==='board') closeModal();
   if(act==='open'){S.backBoard=(S.tab==='boards'&&S.view==='board')?S.board:null; S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
   else if(act==='home'){S.view='home';S.tab='assets';S.backBoard=null;render();}
-  else if(act==='tab'){S.tab=v;S.view=v==='boards'?'boards':'home';render();window.scrollTo(0,0);}
+  else if(act==='tab'){S.tab=v;S.view=v==='boards'?'boards':v==='drawings'?'drawings':'home';render();window.scrollTo(0,0);}
   else if(act==='board'){S.tab='boards';S.board=v;S.view='board';render();window.scrollTo(0,0);}
   else if(act==='boards'){S.tab='boards';S.view='boards';render();}
   else if(act==='cct'){S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
@@ -1129,7 +1156,7 @@ function boardSummary(b){
 }
 function tabBar(){
   const nb=Object.keys(S.boards).length;
-  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab!=='boards'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button></div>`;
+  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab==='assets'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="drawings" aria-selected="${S.tab==='drawings'}">Drawings${Object.keys(S.drawings).length?' ('+Object.keys(S.drawings).length+')':''}</button></div>`;
 }
 function viewBoards(){
   if(S.loaded && S.loaded.b===false) return `<div class="card"><h2>Loading schedules…</h2></div>`;
@@ -1146,7 +1173,7 @@ function viewBoards(){
 function viewBoard(b){
   const r=boardSummary(b);
   return `<div class="actions"><button class="btn" type="button" data-act="boards">← All boards</button>
-    <button class="btn primary" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button>
+    <button class="btn primary" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button>${dwgForPanel(b.name).length?`<button class="btn" type="button" data-act="dwgPanel" data-v="${esc(b.name)}">Drawings</button>`:''}
     ${S.canEdit?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(b.name)}">Edit schedule</button>`:''}</div>
   <div class="card"><div class="sechead"><h2><span class="tag">${esc(b.name)}</span></h2><span class="prog">${r.done}/${r.n} tested${r.fail?' · '+r.fail+' fail':''}</span></div>
     <div style="font-size:1.1rem;margin-top:4px">${esc(b.desc||'')}</div>
@@ -1276,6 +1303,257 @@ function boardPdf(b){
   for(let p=1;p<=pages;p++){ doc.setPage(p); doc.text(pdfText('Results are the latest saved test for each circuit in the NZES Test Recorder. Page '+p+' of '+pages),M,H-M+2); }
   const fn=`${S.job}_${b.name}_DB_schedule.pdf`;
   download(fn,doc.output('blob'));
+}
+
+/* ================= Drawings (panel drawing sets) =================
+   PDFs live in the private "drawings" bucket. Each set has an index of clickable
+   hotspots per sheet: device tags (open the asset), cross-references (/123.4 jumps
+   to sheet 123 column 4) and panel names. Rendered with pdf.js so sheets stay vector-sharp. */
+const PDFJS_URL='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+const PDFJS_WORKER='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let pdfjsReady=null; const PDF_CACHE={};
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(!pdfjsReady) pdfjsReady=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=PDFJS_URL;
+    s.onload=()=>{ window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS_WORKER; res(window.pdfjsLib); }; s.onerror=()=>{pdfjsReady=null; rej(new Error('pdf.js failed to load'));}; document.head.appendChild(s); });
+  return pdfjsReady;
+}
+async function dwgFileBytes(path){
+  if(PDF_CACHE[path]) return PDF_CACHE[path];
+  const p=(async()=>{
+    const cached=await dwgCacheGet(path); if(cached) return cached;
+    const {data,error}=await sb.storage.from('drawings').download(path); if(error) throw error;
+    const buf=await data.arrayBuffer(); dwgCachePut(path,buf); return buf;
+  })();
+  PDF_CACHE[path]=p; p.catch(()=>{ delete PDF_CACHE[path]; });
+  return p;
+}
+async function dwgPdf(path){ const lib=await loadPdfJs(); const buf=await dwgFileBytes(path); return lib.getDocument({data:new Uint8Array(buf.slice(0))}).promise; }
+/* Browser cache (Cache Storage) so sheets open without signal once viewed */
+async function dwgCacheGet(path){ try{ const c=await caches.open('nzes-dwg'); const r=await c.match('/dwg/'+path); return r?await r.arrayBuffer():null; }catch(_){ return null; } }
+async function dwgCachePut(path,buf){ try{ const c=await caches.open('nzes-dwg'); await c.put('/dwg/'+path,new Response(buf.slice(0),{headers:{'content-type':'application/pdf'}})); }catch(_){} }
+
+/* tag aliases: old drawing tags -> current asset tags */
+function dwgResolve(n){
+  if(S.assets[n]) return [n,1];
+  const [a,t,b]=n.split('-'); const alt={VS:['SV'],ME:b==='02'?['PP']:['CM'],PU:['PP']}[t]||[];
+  for(const x of alt){ const m=a+'-'+x+'-'+b; if(S.assets[m]) return [m,1]; }
+  return [n,0];
+}
+function rebuildDwgIndex(){
+  const ix={};
+  Object.values(S.drawings).forEach(d=>(d.pages||[]).forEach((p,pi)=>(p.links||[]).forEach((l,li)=>{ if(l.k!=='t') return;
+    const [v]=dwgResolve(l.v); (ix[v]=ix[v]||[]).push({id:d._id,pi,li}); })));
+  S.dwgIx=ix;
+}
+function dwgSets(){ return Object.values(S.drawings).sort((x,y)=>(x.order??999)-(y.order??999)||String(x.name).localeCompare(String(y.name))); }
+function dwgHits(tag){ const h=(S.dwgIx||{})[tag]||[]; const seen=new Set(); return h.filter(x=>{const k=x.id+'|'+x.pi; if(seen.has(k)) return false; seen.add(k); return true;}); }
+function dwgForPanel(name){ return dwgSets().filter(d=>d.panel===name||d.name===name); }
+
+function viewDrawings(){
+  const ds=dwgSets();
+  return `<div class="actions">${S.canEdit?'<button class="btn primary" type="button" data-act="dwgUpload">Upload drawing PDFs</button>':''}
+    <input class="search" id="dq" type="search" placeholder="Find a tag on the drawings, e.g. 511-PT-01" value="${esc(S.dq||'')}" autocomplete="off" style="flex:1;min-width:200px;margin:0"></div>
+  ${S.dq?dwgSearchHtml(S.dq):''}
+  <div class="list">${ds.map(d=>{ const up=!!d.file;
+    return `<button class="row s-${up?'done':'none'}" type="button" data-act="${up?'dwgOpen':'dwgMissing'}" data-v="${esc(d._id)}"><span class="stripe"></span>
+      <span><span class="t1"><span class="tag">${esc(d.name)}</span><span class="d">${(d.pages||[]).length} sheets</span></span>
+      <span class="d" style="display:block;color:var(--ink)">${esc(d.title||'')}</span>
+      <span class="d">${esc((d.pages||[]).slice(0,6).map(p=>p.sheet+' '+p.title.toLowerCase()).join(' · '))}${(d.pages||[]).length>6?' …':''}</span></span>
+      <span style="display:grid;gap:4px;justify-items:end">${up?`<span class="pill p-done">Ready</span><span class="prog">${esc(d.rev||'')}</span>`:'<span class="pill p-none">PDF not uploaded</span>'}</span></button>`;}).join('')
+    ||`<div class="card hint">No drawings for this job yet.${S.canEdit?' Upload the panel PDFs with “Upload drawing PDFs”.':''}</div>`}</div>
+  <p class="hint">Tap a device tag on a sheet to open its tests. Tap a cross-reference like /121.4 to jump to that sheet and column.</p>`;
+}
+function dwgSearchHtml(q){
+  q=q.trim().toUpperCase().replace(/\s+/g,''); if(q.length<3) return '';
+  const res=[];
+  Object.values(S.drawings).forEach(d=>(d.pages||[]).forEach((p,pi)=>(p.links||[]).forEach((l,li)=>{
+    const txt=(l.v||'')+' '+(l.txt||''); if(txt.toUpperCase().replace(/-/g,'').includes(q.replace(/-/g,''))) res.push({d,p,pi,li,l}); })));
+  const seen=new Set(); const u=res.filter(r=>{const k=r.d._id+'|'+r.pi+'|'+(r.l.v||r.l.txt); if(seen.has(k)) return false; seen.add(k); return true;}).slice(0,40);
+  return `<div class="card"><h3>On the drawings</h3>${u.length?`<div class="list">${u.map(r=>`<button class="row" type="button" data-act="dgo" data-v="${esc(r.d._id)}" data-p="${r.pi}" data-l="${r.li}"><span class="stripe"></span><span><span class="t1"><span class="tag">${esc(r.l.v||r.l.txt)}</span><span class="d">${esc(r.l.txt||'')}</span></span><span class="d">${esc(r.d.name)} · sheet ${esc(r.p.sheet)} ${esc(r.p.title)}</span></span><span></span></button>`).join('')}</div>`:'<p class="hint">Not found on any sheet.</p>'}</div>`;
+}
+function viewDwg(){
+  const d=S.drawings[S.dwg.id]; if(!d) return '<div class="card">Drawing set not found.</div>';
+  const pi=S.dwg.page, p=d.pages[pi]||{};
+  const panel=d.panel&&S.boards[d.panel]?`<button class="btn" type="button" data-act="board" data-v="${esc(d.panel)}">${esc(d.panel)} schedule</button>`:'';
+  return `<div class="dwgbar">
+    <button class="btn" type="button" data-act="dwgBack">← Drawings</button>
+    <select id="dwgsheet" aria-label="Sheet">${d.pages.map((x,i)=>`<option value="${i}" ${i===pi?'selected':''}>${esc(x.sheet)} – ${esc(x.title)}</option>`).join('')}</select>
+    <button class="btn" type="button" data-act="dwgPrev" ${pi?'':'disabled'} aria-label="Previous sheet">‹</button>
+    <button class="btn" type="button" data-act="dwgNext" ${pi<d.pages.length-1?'':'disabled'} aria-label="Next sheet">›</button>
+    <button class="btn" type="button" data-act="dwgZoom" data-v="-1" aria-label="Zoom out">−</button>
+    <button class="btn" type="button" data-act="dwgZoom" data-v="0">Fit</button>
+    <button class="btn" type="button" data-act="dwgZoom" data-v="1" aria-label="Zoom in">+</button>${panel}
+    <label class="hint dwgtog"><input type="checkbox" id="dwgShow" ${S.dwgShow!==false?'checked':''}> Show links</label></div>
+  <div class="dwghead"><span class="tag">${esc(d.name)}</span> <b>${esc(p.sheet||'')}</b> ${esc(p.title||'')}<span class="hint"> · sheet ${pi+1} of ${d.pages.length}${p.ocr?' · links read from scanned text, may miss some tags':''}</span></div>
+  <div id="dwgwrap" class="dwgwrap"><div id="dwgstage" class="dwgstage"><div class="dwgload">Loading sheet…</div></div></div>`;
+}
+let dwgRenderSeq=0;
+async function drawDwg(){
+  const stage=$('#dwgstage'); if(!stage) return;
+  const seq=++dwgRenderSeq;
+  const d=S.drawings[S.dwg.id], p=d.pages[S.dwg.page];
+  try{
+    const pdf=await dwgPdf(d.file); if(seq!==dwgRenderSeq) return;
+    const page=await pdf.getPage(p.n||S.dwg.page+1);
+    const rot=((p.rot||0)+page.rotate)%360;
+    const base=page.getViewport({scale:1,rotation:rot});
+    const wrap=$('#dwgwrap'); const fitW=Math.max(320,wrap.clientWidth-4);
+    const scale=fitW/base.width*(S.dwg.zoom||1);
+    const vp=page.getViewport({scale,rotation:rot});
+    const dpr=Math.min(window.devicePixelRatio||1,3);
+    const cv=document.createElement('canvas'); cv.width=Math.floor(vp.width*dpr); cv.height=Math.floor(vp.height*dpr);
+    cv.style.width=vp.width+'px'; cv.style.height=vp.height+'px';
+    await page.render({canvasContext:cv.getContext('2d'),viewport:vp,transform:dpr!==1?[dpr,0,0,dpr,0,0]:null}).promise;
+    if(seq!==dwgRenderSeq) return;
+    // hotspot coordinates are stored in points of the displayed (rotated) sheet
+    const k=scale;
+    const show=S.dwgShow!==false;
+    let html='';
+    if(S.dwg.col && p.cols && p.cols.length){
+      const i=S.dwg.col-1, cx=p.cols[i]; if(cx!=null){ const sp=p.cols.length>1?(p.cols[1]-p.cols[0]):80;
+        html+=`<div class="dwgcol" style="left:${(cx-sp/2)*k}px;width:${sp*k}px"></div>`; }
+    }
+    (p.links||[]).forEach((l,li)=>{ const hl=S.dwg.hl===li;
+      const cls=l.k==='x'?'lx':l.k==='b'?'lb':(dwgResolve(l.v)[1]?'lt':'lu');
+      html+=`<button type="button" class="dlink ${cls}${hl?' hl':''}${show||hl?'':' hide'}" data-act="dlink" data-l="${li}" title="${esc(l.k==='x'?'Go to sheet '+l.s+(l.c?' column '+l.c:''):(l.v||l.txt))}" style="left:${l.x*k-2}px;top:${l.y*k-2}px;width:${l.w*k+4}px;height:${l.h*k+4}px"></button>`; });
+    stage.innerHTML=''; stage.style.width=vp.width+'px'; stage.style.height=vp.height+'px'; stage.appendChild(cv); stage.insertAdjacentHTML('beforeend',html);
+    const tgt=stage.querySelector('.dlink.hl')||stage.querySelector('.dwgcol');
+    if(tgt){ const r=tgt.getBoundingClientRect(), w=wrap.getBoundingClientRect(); wrap.scrollLeft+=r.left-w.left-w.width/2+r.width/2; wrap.scrollTop+=r.top-w.top-w.height/2+r.height/2; tgt.scrollIntoView({block:'center',inline:'nearest'}); }
+  }catch(e){ if(seq===dwgRenderSeq) stage.innerHTML=`<div class="dwgload">Could not load this drawing (${esc(e.message||e.code||'error')}). ${navigator.onLine?'':'You are offline and this sheet has not been opened on this device before.'}</div>`; }
+}
+function dwgGo(id,pi,opts={}){ S.tab='drawings'; S.view='dwg'; S.dwg={id,page:pi,zoom:opts.zoom||(S.dwg&&S.dwg.id===id?S.dwg.zoom:1)||1,hl:opts.hl??null,col:opts.col||null}; render(); window.scrollTo(0,0); }
+function dwgLinkClick(li){
+  const d=S.drawings[S.dwg.id], p=d.pages[S.dwg.page], l=p.links[li]; if(!l) return;
+  if(l.k==='x'){
+    const panel=l.p||d.panel; const sets=[d,...dwgSets().filter(x=>x._id!==d._id&&(x.panel===panel||x.name===panel))];
+    const cand=l.p&&l.p!==d.panel?sets.slice(1):sets;
+    for(const s of cand){ const i=(s.pages||[]).findIndex(x=>x.sheet===l.s); if(i>=0){ if(!s.file){ toast(s.name+' PDF not uploaded yet'); return; } dwgGo(s._id,i,{col:+l.c||null}); return; } }
+    toast('Sheet '+(l.p?l.p+'/':'')+l.s+' is not in the uploaded drawings'); return;
+  }
+  if(l.k==='b'){ const sets=dwgForPanel(l.v).filter(x=>x._id!==d._id);
+    modal(`<h2><span class="tag">${esc(l.v)}</span></h2><div class="list">
+      ${sets.map(s=>`<button class="row" type="button" data-act="dgo" data-v="${esc(s._id)}" data-p="0"><span class="stripe"></span><span><span class="t1">${esc(s.name)} drawings</span><span class="d">${esc(s.title||'')}</span></span><span></span></button>`).join('')}
+      ${S.boards[l.v]?`<button class="row" type="button" data-act="board" data-v="${esc(l.v)}"><span class="stripe"></span><span><span class="t1">${esc(l.v)} DB schedule</span></span><span></span></button>`:''}
+      ${S.assets[l.v]?`<button class="row" type="button" data-act="open" data-v="${esc(l.v)}"><span class="stripe"></span><span><span class="t1">${esc(l.v)} supply cable tests</span></span><span></span></button>`:''}
+      ${!sets.length&&!S.boards[l.v]&&!S.assets[l.v]?'<p class="hint">Nothing else in the app for this panel yet.</p>':''}</div>
+      <div class="actions"><button class="btn" type="button" data-act="close">Close</button></div>`); return; }
+  const [tag,known]=dwgResolve(l.v); const a=known?S.assets[tag]:null;
+  const others=dwgHits(tag).filter(h=>!(h.id===S.dwg.id&&h.pi===S.dwg.page));
+  const st=a?assetStatus(a):null;
+  modal(`<h2><span class="tag">${esc(tag)}</span></h2>
+    ${a?`<div style="font-size:1.05rem">${esc(a.desc)}</div><p class="hint">${st?ST_LABEL[st.st]+' · '+st.done+'/'+st.total+' tests':''}${l.txt&&l.txt!==tag?' · on drawing as '+esc(l.txt):''}</p>`
+       :`<p class="hint">${l.txt?'On drawing as '+esc(l.txt)+'. ':''}Not in this job's asset list.${S.canEdit?' Add it with + Add device if it needs testing.':''}</p>`}
+    <div class="actions">${a?`<button class="btn primary" type="button" data-act="open" data-v="${esc(tag)}">Open tests</button>`:''}<button class="btn" type="button" data-act="close">Close</button></div>
+    ${others.length?`<h3>Also on</h3><div class="list">${others.map(h=>{const s=S.drawings[h.id],pg=s.pages[h.pi];return `<button class="row" type="button" data-act="dgo" data-v="${esc(h.id)}" data-p="${h.pi}" data-l="${h.li}"><span class="stripe"></span><span><span class="t1"><span class="tag">${esc(s.name)}</span> ${esc(pg.sheet)}</span><span class="d">${esc(pg.title)}</span></span><span></span></button>`;}).join('')}</div>`:''}`);
+}
+function dwgButtonForAsset(a){
+  const h=dwgHits(a.tag); if(!h.length) return '';
+  return `<button class="btn" type="button" data-act="dwgAsset" data-v="${esc(a.tag)}">Drawings (${h.length})</button>`;
+}
+function dwgAssetClick(tag){
+  const h=dwgHits(tag); if(!h.length) return;
+  if(h.length===1){ const x=h[0]; if(!S.drawings[x.id].file){ toast('PDF not uploaded yet'); return; } dwgGo(x.id,x.pi,{hl:x.li}); return; }
+  modal(`<h2><span class="tag">${esc(tag)}</span> on the drawings</h2><div class="list">${h.map(x=>{const s=S.drawings[x.id],pg=s.pages[x.pi];
+    return `<button class="row" type="button" data-act="dgo" data-v="${esc(x.id)}" data-p="${x.pi}" data-l="${x.li}"><span class="stripe"></span><span><span class="t1"><span class="tag">${esc(s.name)}</span> ${esc(pg.sheet)}</span><span class="d">${esc(pg.title)}</span></span><span>${s.file?'':'<span class="pill p-none">no PDF</span>'}</span></button>`;}).join('')}</div>
+    <div class="actions"><button class="btn" type="button" data-act="close">Close</button></div>`);
+}
+function dwgClick(act,b){
+  const v=b.dataset.v;
+  if(act==='dwgOpen'){ dwgGo(v,0,{zoom:1}); return true; }
+  if(act==='dwgMissing'){ toast(S.canEdit?'Upload this PDF with “Upload drawing PDFs”':'This drawing has not been uploaded yet – ask James'); return true; }
+  if(act==='dwgBack'){ S.view='drawings'; S.tab='drawings'; render(); return true; }
+  if(act==='dwgPrev'){ dwgGo(S.dwg.id,S.dwg.page-1); return true; }
+  if(act==='dwgNext'){ dwgGo(S.dwg.id,S.dwg.page+1); return true; }
+  if(act==='dwgZoom'){ const z=S.dwg.zoom||1; S.dwg.zoom= v==='0'?1: v==='1'?Math.min(6,z*1.5):Math.max(1,z/1.5); S.dwg.hl=null; S.dwg.col=null; drawDwg(); return true; }
+  if(act==='dlink'){ dwgLinkClick(+b.dataset.l); return true; }
+  if(act==='dgo'){ closeModal(); if(!S.drawings[v].file){ toast('PDF not uploaded yet'); return true; } dwgGo(v,+b.dataset.p||0,{hl:b.dataset.l!=null?+b.dataset.l:null}); return true; }
+  if(act==='dwgAsset'){ dwgAssetClick(v); return true; }
+  if(act==='dwgPanel'){ const s=dwgForPanel(v); if(s.length===1&&s[0].file) dwgGo(s[0]._id,0); else { S.tab='drawings'; S.view='drawings'; S.dq=''; render(); } return true; }
+  if(act==='dwgUpload'){ openDwgUpload(); return true; }
+  return false;
+}
+document.addEventListener('change',e=>{
+  if(e.target.id==='dwgsheet'){ dwgGo(S.dwg.id,+e.target.value); }
+  if(e.target.id==='dwgShow'){ S.dwgShow=e.target.checked; document.querySelectorAll('.dlink').forEach(x=>x.classList.toggle('hide',!S.dwgShow&&!x.classList.contains('hl'))); }
+});
+document.addEventListener('input',e=>{ if(e.target.id==='dq'){ S.dq=e.target.value; const pos=e.target.selectionStart; render(); const q=$('#dq'); if(q){q.focus(); try{q.setSelectionRange(pos,pos);}catch(_){}} } });
+let dwgResizeT=null; window.addEventListener('resize',()=>{ if(S.view==='dwg'){ clearTimeout(dwgResizeT); dwgResizeT=setTimeout(drawDwg,250); } });
+
+/* ---------- Upload (admins) ---------- */
+async function openDwgUpload(){
+  modal(`<h2>Upload drawing PDFs</h2><p class="hint">Pick one or more panel drawing PDFs. Each is matched to its drawing set; new sets get their tags and cross-references read automatically. Uploading again replaces that set's PDF.</p>
+   <input type="file" id="dwgfiles" accept="application/pdf" multiple>
+   <div id="dwgrows" class="list" style="margin-top:10px"></div>
+   <div class="actions"><button class="btn primary" type="button" id="dwgGo" disabled>Upload</button><button class="btn" type="button" data-act="close">Cancel</button></div><p class="hint" id="dwgmsg"></p>`);
+  let items=[];
+  $('#dwgfiles').addEventListener('change',async e=>{
+    const files=[...e.target.files]; $('#dwgmsg').textContent='Reading files…'; items=[];
+    const lib=await loadPdfJs();
+    for(const f of files){ const buf=await f.arrayBuffer(); let pdf=null,guess='';
+      try{ pdf=await lib.getDocument({data:new Uint8Array(buf.slice(0))}).promise; const pg=await dwgExtractPage(pdf,1); guess=pg.panel||''; }catch(err){}
+      const n=pdf?pdf.numPages:0; const fname=f.name.replace(/\.pdf$/i,'');
+      const sets=dwgSets(); const norm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+      let match=sets.find(s=>norm(s.fileName).replace(/PDF$/,'')===norm(fname))||sets.find(s=>!s.file&&s.pages.length===n&&(norm(fname).includes(norm(s.name))||norm(guess)===norm(s.panel)))
+        ||sets.find(s=>s.pages.length===n&&(norm(fname).includes(norm(s.name))||(guess&&norm(guess)===norm(s.panel))));
+      items.push({f,buf,pdf,n,guess,fname,target:match?match._id:'new'}); }
+    $('#dwgrows').innerHTML=items.map((it,i)=>`<div class="card" style="padding:8px"><b>${esc(it.f.name)}</b> <span class="hint">${it.n} pages${it.guess?' · title block says '+esc(it.guess):''}</span>
+      <div class="field"><label for="dwgt${i}">Goes to</label><select id="dwgt${i}" data-i="${i}">${dwgSets().map(s=>`<option value="${esc(s._id)}" ${it.target===s._id?'selected':''}>${esc(s.name)} – ${esc(s.title||'')} (${s.pages.length} sheets)${s.file?' – replace':''}</option>`).join('')}<option value="new" ${it.target==='new'?'selected':''}>New drawing set: ${esc(it.guess||it.fname)}</option></select></div></div>`).join('');
+    $('#dwgrows').querySelectorAll('select').forEach(sl=>sl.addEventListener('change',()=>{ items[+sl.dataset.i].target=sl.value; }));
+    $('#dwgmsg').textContent=''; $('#dwgGo').disabled=!items.length;
+  });
+  $('#dwgGo').addEventListener('click',async()=>{
+    const btn=$('#dwgGo'); btn.disabled=true; let ok=0;
+    for(const it of items){
+      try{
+        $('#dwgmsg').textContent='Uploading '+it.f.name+'…';
+        let id=it.target, rec;
+        if(id==='new'){ const name=(it.guess&&!/\s/.test(it.guess)?it.guess:it.fname).replace(/\s+Rev\s*\w+$/i,'').trim(); id=idOf(S.job,'DWG~'+name);
+          $('#dwgmsg').textContent='Reading tags on '+it.f.name+'…';
+          const pages=[]; for(let n=1;n<=it.n;n++) pages.push(await dwgExtractPage(it.pdf,n));
+          const panel=pages[0].panel||name; const sheets=new Set(pages.map(p=>p.sheet));
+          pages.forEach(p=>{ p.links=p.links.filter(l=>!(l.k==='b'&&l.v===panel) && !(l.k==='x'&&l.bare&&!sheets.has(l.s))); p.links.forEach(l=>delete l.bare); });
+          rec={name,panel,title:it.fname,fileName:it.f.name,pages,order:Object.keys(S.drawings).length,job:S.job}; }
+        else { rec=Object.assign({},S.drawings[id]); delete rec._id; }
+        const path=S.job+'/'+id.split('~').pop().replace(/[^A-Za-z0-9_.-]/g,'_')+'.pdf';
+        const {error:ue}=await sb.storage.from('drawings').upload(path,new Blob([it.buf],{type:'application/pdf'}),{contentType:'application/pdf',upsert:true}); if(ue) throw ue;
+        rec.file=path; rec.fileName=it.f.name; rec.uploadedAt=new Date().toISOString(); rec.uploadedBy=S.profile.name||S.email||'';
+        const m=/Rev\s*([A-Z0-9]+)/i.exec(it.f.name); if(m) rec.rev='Rev '+m[1].toUpperCase();
+        delete PDF_CACHE[path]; try{ const c=await caches.open('nzes-dwg'); await c.delete('/dwg/'+path); }catch(_){}
+        await S.db.doc('drawings/'+id).set(rec); ok++;
+      }catch(err){ toast('Failed: '+it.f.name+' ('+(err.message||err.code||'error')+')'); }
+    }
+    $('#dwgmsg').textContent=''; closeModal(); toast(ok+' drawing set'+(ok===1?'':'s')+' uploaded');
+  });
+}
+/* Read the title block, cross-references and tags from one PDF page (text PDFs only) */
+const DWG_TAG=/(?<![A-Z0-9])[NO]?(\d{3})-?([A-Z]{2,3})-?(\d{2})(?!\d)/;
+const DWG_X=/^(?:\+([A-Z0-9-]+))?\/(\d{3})(?:\.(\d+))?$/;
+async function dwgExtractPage(pdf,n){
+  const page=await pdf.getPage(n); const vp=page.getViewport({scale:1}); const tc=await page.getTextContent();
+  const ws=[];
+  tc.items.forEach(it=>{ if(!it.str||!it.str.trim()) return; const t=pdfjsLib.Util.transform(vp.transform,it.transform);
+    const h=Math.hypot(t[2],t[3])||8; const vert=Math.abs(t[1])>Math.abs(t[0]); const up=t[1]<0;
+    const cw=(it.width||it.str.length*h*0.5)/Math.max(1,it.str.length); let o=0;
+    it.str.split(/(\s+)/).forEach(part=>{ const L=part.length*cw; if(part.trim()){
+        if(!vert) ws.push({x:t[4]+o,y:t[5]-h,x2:t[4]+o+L,y2:t[5],t:part});
+        else if(up) ws.push({x:t[4]-h,y:t[5]-o-L,x2:t[4],y2:t[5]-o,t:part});
+        else ws.push({x:t[4],y:t[5]+o,x2:t[4]+h,y2:t[5]+o+L,t:part}); }
+      o+=L; }); });
+  const H=vp.height; let panel='',sheet='',title='';
+  const ee=ws.find(w=>w.t==='=EE');
+  if(ee){ const col=ws.filter(w=>Math.abs(w.x-ee.x)<3&&w.y>ee.y+3).sort((a,b)=>a.y-b.y);
+    if(col.length>=2){ panel=ws.filter(w=>Math.abs(w.y-col[0].y)<2&&w.x>=ee.x-1&&w.x<ee.x+110&&w.t!=='Page').sort((a,b)=>a.x-b.x).map(w=>w.t).join(' ').replace(/^\+/,''); sheet=col[1].t; } }
+  const de=ws.find(w=>w.t==='Description'&&w.y>H-100&&w.x>350);
+  if(de) title=ws.filter(w=>Math.abs(w.y-de.y)<2&&w.x>de.x2+5&&w.x<de.x+260).sort((a,b)=>a.x-b.x).map(w=>w.t).join(' ');
+  const links=[];
+  ws.forEach(w=>{ if(w.y>H-95) return; const r=v=>Math.round(v*10)/10; const box={x:r(w.x),y:r(w.y),w:r(w.x2-w.x),h:r(w.y2-w.y)};
+    const m=DWG_X.exec(w.t); if(m){ links.push(Object.assign({k:'x',p:m[1]||'',s:m[2],c:m[3]||''},box)); return; }
+    const m2=/^(\d{3})\.(\d{1,2})$/.exec(w.t); if(m2&&n>0){ links.push(Object.assign({k:'x',s:m2[1],c:m2[2],bare:1},box)); return; }
+    const t=DWG_TAG.exec(w.t); if(t){ const v=t[1]+'-'+t[2]+'-'+t[3]; links.push(Object.assign({k:'t',v,txt:w.t},box)); return; }
+    const b=w.t.replace(/^[+-]+/,'').split(':')[0]; if(b.length>=4&&S.boards[b]) links.push(Object.assign({k:'b',v:b,txt:w.t},box)); });
+  const cols=ws.filter(w=>w.y<40&&/^\d{1,2}$/.test(w.t)).map(w=>Math.round((w.x+w.x2)/2*10)/10).sort((a,b)=>a-b);
+  return {n,panel:panel||'',sheet:sheet||String(n),title:(title||('Sheet '+n)).replace(/\b([A-Z])([A-Z]+)\b/g,(m,x,y)=>x+y.toLowerCase()),w:vp.width,h:vp.height,cols,links};
 }
 
 init();
