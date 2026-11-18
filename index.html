@@ -282,11 +282,13 @@ async function freshToken(force){
   if(_fresh) return _fresh;
   _fresh=(async()=>{ try{
     const {data:{session}}=await withTimeout(sb.auth.getSession(),8000).then(r=>r.data?r:{data:{}});
-    if(!session) return false;
+    if(!session) return 'lost';
     const left=(session.expires_at||0)*1000-Date.now();
     if(!force&&left>120000) return true;
     const r=await withTimeout(sb.auth.refreshSession(),10000);
-    return !!(r&&r.data&&r.data.session);
+    if(r&&r.data&&r.data.session) return true;
+    const em=((r&&r.error&&r.error.message)||'');
+    return /refresh|token|session|invalid|revoked|not found/i.test(em)&&!/fetch|network|timeout/i.test(em)?'lost':false;
   }catch(e){ return false; } finally{ setTimeout(()=>{_fresh=null;},0); } })();
   return _fresh;
 }
@@ -305,9 +307,9 @@ function makeDb(){
       let r;
       if(navigator.onLine===false) r={error:{message:'offline',code:''}};
       else { if(S.noSession){ const g=await withTimeout(sb.auth.getSession(),8000); if(g.data&&g.data.session) S.noSession=false; }
-        await freshToken();
+        if(!S.noSession&&(await freshToken())==='lost'){ authLost(); return; }
         r=S.noSession?{error:{message:'no session',code:''}}:await withTimeout(q,15000);
-        if(r.error&&isJwtErr(r.error)){ const ok=await freshToken(true); if(ok) r=await withTimeout(q,15000); else { authLost(); return; } } }
+        if(r.error&&isJwtErr(r.error)){ const ok=await freshToken(true); if(ok===true) r=await withTimeout(q,15000); else { authLost(); return; } } }
       if(r.error&&served&&/jwt|401/i.test((r.error.message||'')+(r.error.code||''))) r={error:{message:'auth',code:''}};
       const data=r.data, e=r.error; if(!alive) return;
       if(e){ if(errOf(e).code==='unavailable'){ const had=served||await fromCache(); if(had||served){ setOffline(true); return; } } error&&error(errOf(e)); return; }
