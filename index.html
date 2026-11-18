@@ -797,7 +797,8 @@ function render(){
 }
 
 /* ================= Job summary (admins + people an admin lists for the job) ================= */
-function canSummary(){ if(S.canEdit) return true; const l=((S.jobs[S.job]||{}).summaryUsers)||[]; const me=String(S.email||'').toLowerCase(); return !!me&&l.map(x=>String(x).toLowerCase()).includes(me); }
+function canSummary(){ if(!WIDE()) return false;   // computer only – phones stay on the site-work tabs
+  if(S.canEdit) return true; const l=((S.jobs[S.job]||{}).summaryUsers)||[]; const me=String(S.email||'').toLowerCase(); return !!me&&l.map(x=>String(x).toLowerCase()).includes(me); }
 function viewSummary(){
   const all=Object.values(S.assets); const tot={none:0,part:0,done:0,fail:0}, tests={done:0,total:0};
   const groups={}; const fails=[];
