@@ -185,26 +185,83 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {auth:{
 const errOf = e => ({code: !e ? 'unavailable' : (e.code==='42501'||/row-level security|permission/i.test(e.message||'')) ? 'invalid_argument' : (e.code||'unavailable'), message: e&&e.message||''});
 const asSnap = rows => ({docs: rows.map(r=>({id:r.id, exists:true, data:()=>r.data})), metadata:{fromCache:false}});
 
+/* ================= Offline: saved copy of job data + queue of tests waiting to upload ================= */
+const KV=(()=>{ let dbp=null;
+  const open=()=>dbp||(dbp=new Promise((res,rej)=>{ const r=indexedDB.open('nzes-tests',1); r.onupgradeneeded=()=>r.result.createObjectStore('kv'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }));
+  const tx=async(mode,fn)=>{ const db=await open(); return new Promise((res,rej)=>{ const t=db.transaction('kv',mode); const rq=fn(t.objectStore('kv')); t.oncomplete=()=>res(rq.result); t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); };
+  return {get:k=>tx('readonly',s=>s.get(k)).catch(()=>undefined), set:(k,v)=>tx('readwrite',s=>s.put(v,k)).then(()=>true).catch(()=>false)}; })();
+const NET={pending:[],reloaders:new Set(),syncing:false,ready:null};
+NET.ready=KV.get('pending').then(p=>{ if(Array.isArray(p)) NET.pending=p; });
+function setOffline(v){ if(S.offline===v) return; S.offline=v; if(!v){ S.stale=false; syncPending(); } if(S.view!=='form'&&S.view!=='dwg') render(); else netBanner(); }
+function netBanner(){ const el=document.getElementById('netbar'); if(el) el.outerHTML=netBarHtml(); }
+function netBarHtml(){
+  const mine=NET.pending.length, bad=NET.pending.filter(p=>p.err).length;
+  if(!S.offline&&!mine) return '<div id="netbar"></div>';
+  return `<div id="netbar">${S.offline?`<div class="banner">📴 <b>Offline</b> – showing the copy saved on this device. Tests you save are kept here and upload when signal returns.</div>`:''}
+    ${mine?`<div class="banner${bad?' err':''}">${mine} test${mine===1?'':'s'} waiting to upload${bad?' – '+bad+' refused by the server ('+esc(NET.pending.find(p=>p.err).err)+'). Tell James.':'.'} <button class="btn" type="button" data-act="syncNow">Upload now</button></div>`:''}</div>`;
+}
+function mergePending(){
+  const srv=S.serverTests||[]; const ids=new Set(srv.map(t=>t._id));
+  S.tests=srv.concat(NET.pending.filter(p=>p.job===S.job&&!ids.has(p.id)).map(p=>Object.assign({_id:p.id,_pending:true},p.data)));
+  rebuildLatest();
+}
+async function queueTest(row){ NET.pending.push(row); const ok=await KV.set('pending',NET.pending); mergePending(); if(!ok) throw {code:'storage_full'}; return {id:row.id,queued:true}; }
+async function syncPending(){
+  if(NET.syncing||!NET.pending.length) return; NET.syncing=true; let sent=0;
+  try{ const {data:{session}}=await sb.auth.getSession(); if(!session) return;
+    for(const row of [...NET.pending]){
+      const {error:e}=await sb.from('tests').insert({id:row.id,job:row.job,data:row.data});
+      if(!e||e.code==='23505'){ NET.pending=NET.pending.filter(p=>p.id!==row.id); sent++; await KV.set('pending',NET.pending); }
+      else if(errOf(e).code==='unavailable') break;
+      else { row.err=e.message||e.code; await KV.set('pending',NET.pending); }
+    }
+  }catch(_){ }
+  finally{ NET.syncing=false; if(sent){ toast(sent+' saved test'+(sent===1?'':'s')+' uploaded'); NET.reloaders.forEach(f=>f()); } mergePending(); if(S.view!=='form'&&S.view!=='dwg') render(); else netBanner(); }
+}
+window.addEventListener('online',()=>{ NET.reloaders.forEach(f=>f()); syncPending(); });
+window.addEventListener('offline',()=>{ if(typeof S!=='undefined'&&S.db) setOffline(true); });
+setInterval(()=>{ if(typeof S==='undefined'||!S.db) return; if(S.offline) NET.reloaders.forEach(f=>f()); if(NET.pending.length&&navigator.onLine!==false) syncPending(); },30000);
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&NET.pending.length) syncPending(); });
+if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='127.0.0.1')) window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+const withTimeout=(p,ms)=>Promise.race([p,new Promise(res=>setTimeout(()=>res({error:{message:'timeout',code:''}}),ms))]);
+
 /* Minimal document-store API over three tables (jobs, assets, tests) + profiles */
 function makeDb(){
   const watch=(table,filter,next,error)=>{
-    let alive=true;
+    let alive=true, served=false, live=false; const ck='c:'+table+':'+(filter?filter[1]:'all');
+    const fromCache=async()=>{ const rows=await KV.get(ck); if(!alive||live||served||!rows) return !!rows&&served; served=true; const sn=asSnap(rows); sn.metadata.fromCache=true; next(sn); return true; };
+    fromCache();
     const load=async()=>{ let q=sb.from(table).select('id,data').order('created_at',{ascending:true}).limit(10000);
       if(filter) q=q.eq(filter[0],filter[1]);
-      const {data,error:e}=await q; if(!alive) return; if(e){ error&&error(errOf(e)); return; } next(asSnap(data||[])); };
+      let r;
+      if(navigator.onLine===false) r={error:{message:'offline',code:''}};
+      else { if(S.noSession){ const g=await withTimeout(sb.auth.getSession(),8000); if(g.data&&g.data.session) S.noSession=false; }
+        r=S.noSession?{error:{message:'no session',code:''}}:await withTimeout(q,15000); }
+      if(r.error&&served&&/jwt|401/i.test((r.error.message||'')+(r.error.code||''))) r={error:{message:'auth',code:''}};
+      const data=r.data, e=r.error; if(!alive) return;
+      if(e){ if(errOf(e).code==='unavailable'){ const had=served||await fromCache(); if(had||served){ setOffline(true); return; } } error&&error(errOf(e)); return; }
+      live=true; KV.set(ck,data||[]); setOffline(false); next(asSnap(data||[])); };
+    NET.reloaders.add(load);
     let t=null; const soon=()=>{ clearTimeout(t); t=setTimeout(load,250); };
     const ch=sb.channel(table+'-'+(filter?filter[1]:'all')+'-'+Math.random().toString(36).slice(2))
       .on('postgres_changes',{event:'*',schema:'public',table,...(filter?{filter:filter[0]+'=eq.'+filter[1]}:{})},soon)
       .subscribe();
     load();
     const onVis=()=>{ if(document.visibilityState==='visible') load(); }; document.addEventListener('visibilitychange',onVis);
-    return ()=>{ alive=false; sb.removeChannel(ch); document.removeEventListener('visibilitychange',onVis); };
+    return ()=>{ alive=false; NET.reloaders.delete(load); sb.removeChannel(ch); document.removeEventListener('visibilitychange',onVis); };
   };
   const collection=name=>{
     const q={_f:null,
       where(field,op,value){ const n=Object.create(q); n._f=[field,value]; return n; },
       onSnapshot(next,error){ return watch(name,this._f,next,error); },
-      async add(rec){ const {data,error:e}=await sb.from(name).insert({job:rec.job,data:rec}).select('id').single(); if(e) throw errOf(e); return {id:data.id}; }};
+      async add(rec){
+        if(name!=='tests'){ const {data,error:e}=await sb.from(name).insert({job:rec.job,data:rec}).select('id').single(); if(e) throw errOf(e); return {id:data.id}; }
+        const row={id:crypto.randomUUID(),job:rec.job,data:rec};   // id made here so a retried upload can never double up
+        if(navigator.onLine===false||S.noSession) return queueTest(row);
+        const {error:e}=await withTimeout(sb.from('tests').insert(row),10000);
+        if(!e) return {id:row.id};
+        if(errOf(e).code==='unavailable'){ setOffline(true); return queueTest(row); }
+        throw errOf(e); }};
     return q;
   };
   const doc=path=>{
@@ -607,14 +664,23 @@ const ST_LABEL={none:'Not started',part:'In progress',done:'Complete',fail:'Has 
 /* ---------------- Data wiring ---------------- */
 async function init(){
   renderShell();
-  const {data:{session}}=await sb.auth.getSession();
-  sb.auth.onAuthStateChange((ev,sess)=>{ if(ev==='SIGNED_IN'&&!S.uid) location.reload(); if(ev==='SIGNED_OUT') location.reload(); });
+  let session=null; try{ session=(await withTimeout(sb.auth.getSession(),8000).then(r=>r.data||{})).session||null; }catch(e){}
+  let ident=null; try{ ident=JSON.parse(localStorage.getItem('nzes.ident')||'null'); }catch(e){}
+  const hasToken=()=>{ try{ return Object.keys(localStorage).some(k=>/^sb-.*-auth-token$/.test(k)); }catch(e){ return false; } };
+  sb.auth.onAuthStateChange((ev,sess)=>{ if(ev==='SIGNED_IN'&&!S.uid) location.reload();
+    if(ev==='SIGNED_OUT'){ try{ localStorage.removeItem('nzes.ident'); }catch(e){} location.reload(); }
+    if(sess&&S.noSession){ S.noSession=false; NET.reloaders.forEach(f=>f()); syncPending(); } });
+  await NET.ready;
+  // No signal and the sign-in could not be refreshed: carry on as the last signed-in person on this device
+  if(!session && ident && hasToken()){ session={user:{id:ident.uid,email:ident.email}}; S.noSession=true; S.offline=true; }
   if(!session){ $('#app').innerHTML=loginView(); wireLogin(); $('#jobname').textContent='Not signed in'; $('#jobsel').style.display='none'; return; }
   S.db=makeDb(); S.dl=DL; S.assetsCap=makeAssets(); S.sample=makeSample(); S.canImg=true;
   S.uid=session.user.id; S.email=session.user.email; S.canWrite=true;
-  try{ const {data}=await sb.rpc('is_admin'); S.canEdit=!!data; }catch(e){ S.canEdit=false; }
+  try{ if(S.noSession) throw 0; const {data,error}=await withTimeout(sb.rpc('is_admin'),8000); if(error) throw error; S.canEdit=!!data; }catch(e){ S.canEdit=!!(ident&&ident.uid===S.uid&&ident.canEdit); }
+  if(!S.noSession){ try{ localStorage.setItem('nzes.ident',JSON.stringify({uid:S.uid,email:S.email,canEdit:S.canEdit})); }catch(e){} }
+  KV.get('profile:'+S.uid).then(p=>{ if(p&&!S.profile.name){ S.profile=p; render(); } });
   let saved=null; try{ saved=localStorage.getItem('nzes.job'); }catch(e){}
-  S.db.doc('data/users/'+S.uid+'/profile').get().then(d=>{ if(d.exists){ S.profile=d.data()||{}; render(); } }).catch(()=>{});
+  S.db.doc('data/users/'+S.uid+'/profile').get().then(d=>{ if(d.exists){ S.profile=d.data()||{}; KV.set('profile:'+S.uid,S.profile); render(); } }).catch(()=>{});
   const timer=setTimeout(()=>{ S.stale=true; render(); },10000);
   S.db.collection('jobs').onSnapshot(snap=>{
     clearTimeout(timer); S.stale=false;
@@ -625,7 +691,7 @@ async function init(){
   },e=>{ clearTimeout(timer); S.error='Could not load jobs ('+e.code+').'; render(); });
 }
 function switchJob(id){
-  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.latest={}; S.boards={}; S.circuits={}; S.drawings={}; S.dwgIx={}; S.loaded={a:false,t:false,b:false,d:false};
+  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.serverTests=[]; S.latest={}; S.boards={}; S.circuits={}; S.drawings={}; S.dwgIx={}; S.loaded={a:false,t:false,b:false,d:false};
   try{ if(id) localStorage.setItem('nzes.job',id); }catch(e){}
   if(!id){ render(); return; }
   const t2=setTimeout(()=>{ S.stale=true; render(); },10000);
@@ -640,7 +706,7 @@ function switchJob(id){
     S.drawings={}; snap.docs.forEach(d=>{const x=d.data(); x._id=d.id; S.drawings[d.id]=x;}); rebuildDwgIndex(); S.loaded.d=true; if(S.view!=='dwg') render();
   },e=>{ S.error='Could not load drawings ('+e.code+').'; render(); }));
   S.unsub.push(S.db.collection('tests').where('job','==',id).onSnapshot(snap=>{
-    S.tests=snap.docs.map(d=>Object.assign({_id:d.id},d.data())); S.loaded.t=true; rebuildLatest(); render();
+    S.serverTests=snap.docs.map(d=>Object.assign({_id:d.id},d.data())); S.loaded.t=true; mergePending(); render();
   },e=>{ S.error='Could not load test results ('+e.code+').'; render(); }));
   renderJobs();
 }
@@ -664,7 +730,8 @@ function render(){
   const m=$('#app');
   const top=[];
   if(S.error) top.push(`<div class="banner err">${esc(S.error)}</div>`);
-  else if(S.stale) top.push(`<div class="banner">Can't reach the database right now. Results shown may be out of date; saves will go through when signal returns.</div>`);
+  else if(S.db) top.push(netBarHtml());
+  if(S.stale&&!S.offline&&!S.error) top.push(`<div class="banner">Still trying to reach the database…</div>`);
 
   if(S.db && !S.profile.name && S.uid) top.push(`<div class="banner">Set your name, registration no. and test instrument under <b>Me</b> so they go on every sheet. <button class="btn" data-act="profile" type="button">Set up</button></div>`);
   if(S.profile.calDue && S.profile.calDue < today()) top.push(`<div class="banner err">Your instrument calibration was due ${esc(fmtDate(S.profile.calDue))}. Results can still be saved but will show this on the sheet.</div>`);
@@ -767,7 +834,7 @@ function viewAsset(a){
       const r=t?t.result:''; const lab=t?({pass:'Pass',fail:'FAIL',na:'N/A',rec:'Recorded',warn:'Check'}[r]||'Saved'):'To do';
       return `<button class="tile ${r?'r-'+r:''}" type="button" data-act="sec" data-v="${esc(s.key)}">
         <span class="h"><span>${esc(s.title)}</span><span class="pill p-${r==='pass'||r==='rec'?'done':r==='fail'?'fail':r==='warn'?'warn':r==='na'?'na':'none'}">${lab}</span></span>
-        ${t?`<span class="m">${esc(t.testerName||'')} · ${esc(fmtDate(t.testDate||t.at))}</span><span class="v">${esc(valSummary(a,s,t))}</span>`:'<span class="m">Tap to record</span>'}
+        ${t?`<span class="m">${t._pending?'⏳ waiting to upload · ':''}${esc(t.testerName||'')} · ${esc(fmtDate(t.testDate||t.at))}</span><span class="v">${esc(valSummary(a,s,t))}</span>`:'<span class="m">Tap to record</span>'}
       </button>`;}).join('')}</div>`).join('')}
   <div class="card"><h3>History</h3>
    ${hist.length?`<div class="tablewrap"><table class="hist"><thead><tr><th>Date</th><th>Test</th><th>By</th><th>Result</th><th>Values</th>${S.canEdit?'<th></th>':''}</tr></thead><tbody>
@@ -880,12 +947,13 @@ async function saveTest(){
     limits:LIM(),testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),isolated:iso?iso.checked:null};
   btn.disabled=true; btn.textContent='Saving…';
   try{
-    await S.db.collection('tests').add(rec);
-    toast(j.result==='fail'?'Saved – FAIL recorded':'Saved'); S.view='asset'; render();
+    const r=await S.db.collection('tests').add(rec);
+    toast(r.queued?'Saved on this device – uploads when signal returns':j.result==='fail'?'Saved – FAIL recorded':'Saved'); S.view='asset'; render();
   }catch(e){
     btn.disabled=false; btn.textContent='Save test';
     if(e.code==='invalid_argument'){ toast('You do not have permission to save – ask James.'); }
     else if(e.code==='quota_exceeded') toast('Database is full – tell James.');
+    else if(e.code==='storage_full') toast('This device could not store the test – write it down and tell James.');
     else toast('Could not save ('+e.code+'). Try again.');
   }
 }
@@ -929,6 +997,7 @@ function onClick(e){
   else if(act==='editDev') openDevice(S.asset);
   else if(act==='profile') openProfile();
   else if(act==='limits') openLimits();
+  else if(act==='syncNow'){ if(navigator.onLine===false) toast('Still offline'); else { NET.reloaders.forEach(f=>f()); syncPending(); } }
   else if(act==='coc') openCoc(v||null);
   else if(act==='void') voidTest(v,b);
   else if(act==='close') closeModal();
@@ -960,7 +1029,7 @@ function openProfile(){
    <div class="actions"><button class="btn primary" type="submit" ${S.uid?'':'disabled'}>Save</button><button class="btn" type="button" data-act="close">Cancel</button></div>
    <p class="hint">Signed in as ${esc(S.email||'')}. <button class="btn" type="button" id="signOut" style="padding:4px 10px">Sign out</button></p>
   </form>`);
-  $('#signOut').addEventListener('click',async()=>{ await sb.auth.signOut(); });
+  $('#signOut').addEventListener('click',async()=>{ if(NET.pending.length&&!confirm(NET.pending.length+' test(s) have not uploaded yet. Sign out anyway? They stay on this device.')) return; try{ localStorage.removeItem('nzes.ident'); }catch(e){} await sb.auth.signOut(); });
   $('#pform').addEventListener('submit',async e=>{ e.preventDefault();
     const p={name:$('#p_name').value.trim(),licence:$('#p_lic').value.trim(),instrument:$('#p_inst').value.trim(),serial:$('#p_ser').value.trim(),calDue:$('#p_cal').value,irMax:$('#p_irmax').value.replace(/[^0-9.]/g,'')};
     try{ await S.db.doc('data/users/'+S.uid+'/profile').set(p); S.profile=p; closeModal(); toast('Details saved'); render(); }
@@ -1501,7 +1570,7 @@ function dwgForPanel(name){ return dwgSets().filter(d=>d.panel===name||d.name===
 
 function viewDrawings(){
   const ds=dwgSets();
-  return `<div class="actions">${S.canEdit?'<button class="btn primary" type="button" data-act="dwgUpload">Upload drawing PDFs</button>':''}
+  return `<div class="actions">${S.canEdit?'<button class="btn primary" type="button" data-act="dwgUpload">Upload drawing PDFs</button>':''}${ds.some(d=>d.file)?'<button class="btn" type="button" data-act="dwgAll">Save all for offline</button>':''}
     <input class="search" id="dq" type="search" placeholder="Find a tag on the drawings, e.g. 511-PT-01" value="${esc(S.dq||'')}" autocomplete="off" style="flex:1;min-width:200px;margin:0"></div>
   ${S.dq?dwgSearchHtml(S.dq):''}
   <div class="list">${ds.map(d=>{ const up=!!d.file;
@@ -1620,6 +1689,10 @@ function dwgClick(act,b){
   if(act==='dwgAsset'){ dwgAssetClick(v); return true; }
   if(act==='dwgPanel'){ const s=dwgForPanel(v); if(s.length===1&&s[0].file) dwgGo(s[0]._id,0); else { S.tab='drawings'; S.view='drawings'; S.dq=''; render(); } return true; }
   if(act==='dwgUpload'){ openDwgUpload(); return true; }
+  if(act==='dwgAll'){ (async()=>{ const sets=dwgSets().filter(d=>d.file); let ok=0; b.disabled=true;
+    try{ await loadPdfJs(); }catch(_){}
+    for(const d of sets){ b.textContent='Saving '+(ok+1)+' of '+sets.length+'…'; try{ await dwgFileBytes(d.file); ok++; }catch(_){} }
+    toast(ok+' of '+sets.length+' drawing sets saved on this device'); if(S.view==='drawings'||S.tab==='drawings') render(); })(); return true; }
   return false;
 }
 document.addEventListener('change',e=>{
