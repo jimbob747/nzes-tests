@@ -130,6 +130,18 @@ form.test{display:grid;gap:14px}
 textarea.csv{font-family:var(--mono);font-size:.8rem;min-height:160px}
 @media (max-width:480px){.stats{grid-template-columns:repeat(2,1fr)}.checkrow{grid-template-columns:1fr}}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+.tabs{display:flex;gap:4px;border-bottom:2px solid var(--line);margin:-4px 0 4px}
+.tabbtn{flex:1;background:none;border:0;border-bottom:3px solid transparent;margin-bottom:-2px;padding:10px 8px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer}
+.tabbtn[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+table.sched{width:100%;border-collapse:collapse;font-size:.92rem}
+table.sched th{text-align:left;font-size:.78rem;color:var(--muted);padding:8px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.sched td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+table.sched tr.click{cursor:pointer} table.sched tr.click:hover{background:var(--line)}
+table.sched tr.spare td{color:var(--muted)}
+table.sched tr.s-fail td:first-child{box-shadow:inset 4px 0 var(--fail)} table.sched tr.s-done td:first-child{box-shadow:inset 4px 0 var(--pass)} table.sched tr.s-part td:first-child{box-shadow:inset 4px 0 var(--part)}
+table.sched .tag.small{font-size:.75rem;opacity:.8}
+table.sched .warnnote{color:var(--warn);font-size:.8rem}
+table.sched.edit td{padding:4px} table.sched.edit input,table.sched.edit select{font:inherit;font-size:.9rem;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}
 </style>
 </head>
 <body>
@@ -282,7 +294,7 @@ function sectionsFor(a){
     s.push({key:'c'+i+'.ck',title:'Installation checks',group:g,cable:i});
   });
   if(hasRcd(a)) s.push({key:'rcd',title:'RCD operation',group:'Protection & function'});
-  s.push({key:'fn',title:'Functional test',group:'Protection & function'});
+  if(a.kind!=='circuit') s.push({key:'fn',title:'Functional test',group:'Protection & function'});
   return s;
 }
 
@@ -385,7 +397,7 @@ function judge(a,sec,vals,na){
 
 /* ---------------- State ---------------- */
 const S={db:null,user:null,uid:null,canWrite:null,canEdit:false,dl:null,assetsCap:null,sample:null,canImg:false,
-  jobs:{},job:null,assets:{},tests:[],latest:{},profile:{},view:'home',asset:null,section:null,
+  jobs:{},job:null,assets:{},tests:[],latest:{},profile:{},view:'home',asset:null,section:null,boards:{},circuits:{},tab:'assets',board:null,backBoard:null,
   q:'',group:'All',status:'All',loaded:{a:false,t:false},stale:false,error:null,unsub:[]};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -430,14 +442,17 @@ async function init(){
   },e=>{ clearTimeout(timer); S.error='Could not load jobs ('+e.code+').'; render(); });
 }
 function switchJob(id){
-  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.latest={}; S.loaded={a:false,t:false};
+  S.unsub.forEach(u=>u()); S.unsub=[]; S.job=id; S.assets={}; S.tests=[]; S.latest={}; S.boards={}; S.circuits={}; S.loaded={a:false,t:false,b:false};
   try{ if(id) localStorage.setItem('nzes.job',id); }catch(e){}
   if(!id){ render(); return; }
   const t2=setTimeout(()=>{ S.stale=true; render(); },10000);
   S.unsub.push(S.db.collection('assets').where('job','==',id).onSnapshot(snap=>{
     if(!snap.metadata.fromCache){ clearTimeout(t2); S.stale=false; }
-    S.assets={}; snap.docs.forEach(d=>{const a=d.data(); S.assets[a.tag]=a;}); S.loaded.a=true; render();
+    S.assets={}; snap.docs.forEach(d=>{const a=d.data(); S.assets[a.tag]=a;}); S.loaded.a=true; rebuildCircuits(); render();
   },e=>{ S.error='Could not load assets ('+e.code+').'; render(); }));
+  S.unsub.push(S.db.collection('boards').where('job','==',id).onSnapshot(snap=>{
+    S.boards={}; snap.docs.forEach(d=>{const b=d.data(); b._id=d.id; S.boards[b.name]=b;}); rebuildCircuits(); S.loaded.b=true; render();
+  },e=>{ S.error='Could not load DB schedules ('+e.code+').'; render(); }));
   S.unsub.push(S.db.collection('tests').where('job','==',id).onSnapshot(snap=>{
     S.tests=snap.docs.map(d=>Object.assign({_id:d.id},d.data())); S.loaded.t=true; rebuildLatest(); render();
   },e=>{ S.error='Could not load test results ('+e.code+').'; render(); }));
@@ -472,9 +487,12 @@ function render(){
   if(!S.db || S.error) body='';
   else if(!S.job) body=`<div class="card"><h2>No jobs yet</h2><p class="hint">${S.canEdit?'Create a job from the job menu, then import its asset list.':'Nothing has been set up yet.'}</p></div>`;
   else if(!S.loaded.a) body=`<div class="card"><h2>Loading assets…</h2></div>`;
-  else if(S.view==='asset' && S.assets[S.asset]) body=viewAsset(S.assets[S.asset]);
-  else if(S.view==='form' && S.assets[S.asset]) body=viewForm(S.assets[S.asset],S.section);
-  else body=viewHome();
+  else if(S.view==='asset' && A(S.asset)) body=viewAsset(A(S.asset));
+  else if(S.view==='form' && A(S.asset)) body=viewForm(A(S.asset),S.section);
+  else if(S.view==='boardEdit' && E) body=viewBoardEdit();
+  else if(S.tab==='boards' && S.view==='board' && S.boards[S.board]) body=tabBar()+viewBoard(S.boards[S.board]);
+  else if(S.tab==='boards') body=tabBar()+viewBoards();
+  else body=tabBar()+viewHome();
   m.innerHTML=top.join('')+body;
   if(S.view==='form') wireForm();
 }
@@ -539,14 +557,14 @@ function viewAsset(a){
   const hist=S.tests.filter(t=>t.asset===a.tag).sort((x,y)=>(y.at||'').localeCompare(x.at||''));
   const sl={};secs.forEach(s=>sl[s.key]=s);
   return `
-  <div class="actions"><button class="btn" type="button" data-act="home">← All assets</button>
+  <div class="actions">${a.kind==='circuit'?`<button class="btn" type="button" data-act="board" data-v="${esc(a.board)}">← ${esc(a.board)} schedule</button>`:`${S.backBoard&&S.boards[S.backBoard]?`<button class="btn" type="button" data-act="board" data-v="${esc(S.backBoard)}">← ${esc(S.backBoard)} schedule</button>`:''}<button class="btn" type="button" data-act="home">← All assets</button>`}
     <button class="btn primary" type="button" data-act="pdfOne">Test sheet PDF</button>
-    ${S.canEdit?'<button class="btn" type="button" data-act="editDev">Edit device</button>':''}</div>
+    ${S.canEdit&&a.kind!=='circuit'?'<button class="btn" type="button" data-act="editDev">Edit device</button>':''}${S.canEdit&&a.kind==='circuit'?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(a.board)}">Edit schedule</button>`:''}</div>
   <div class="card">
     <div class="sechead"><h2><span class="tag">${esc(a.tag)}</span></h2><span class="pill p-${st.st}">${ST_LABEL[st.st]} · ${st.done}/${st.total}</span></div>
     <div style="font-size:1.1rem;margin-top:4px">${esc(a.desc)}</div>
     <div class="kv">
-      ${kv('Area',a.area)}${kv('Type',a.type)}${kv('Test sheet',a.sheet==='MCTS'?'Motor & Cable':'Cable')}
+      ${kv('Area',a.area)}${kv('Type',a.type)}${kv('Test sheet',a.sheet==='MCTS'?'Motor & Cable':'Cable')}${kv('Board',a.board)}${kv('Circuit',a.cct)}${kv('RCD',a.rcd)}
       ${kv('kW',a.kw)}${kv('FLC (A)',a.flc)}${kv('Starter',a.starter)}${kv('Protection',a.prot)}${kv('Fed from',a.fed)}
       ${kv('Make / model',[a.make,a.model].filter(Boolean).join(' '))}${kv('Volts',a.volts)}${kv('Phases',a.phases)}${kv('RPM',a.rpm)}
       ${kv('Overload (A)',a.ol)}${kv('Coil',a.coil)}${kv('Drives',a.driven)}${kv('Supply rating (A)',a.rating)}${kv('IP',a.ipr)}
@@ -665,7 +683,7 @@ async function saveTest(){
   const j=judge(F.a,F.sec,F.vals,F.na);
   if(!j.result){ toast('Nothing entered yet'); return; }
   const vals={}; Object.entries(F.vals).forEach(([k,v])=>{ if(v!==''&&v!=null) vals[k]=String(v); });
-  const rec={job:S.job,asset:F.a.tag,section:F.sec.key,cable:F.sec.cable!=null?((F.a.cables||[])[F.sec.cable]||{}).no||'':'',
+  const rec={job:S.job,asset:F.a.tag,board:F.a.board||'',section:F.sec.key,cable:F.sec.cable!=null?((F.a.cables||[])[F.sec.cable]||{}).no||'':'',
     values:vals,result:j.result,why:j.why,testerName:tester,licence:S.profile.licence||'',
     instrument:$('#f_inst')?$('#f_inst').value.trim():'',serial:$('#f_ser')?$('#f_ser').value.trim():'',calDue:S.profile.calDue||'',
     testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),isolated:iso?iso.checked:null};
@@ -682,12 +700,26 @@ async function saveTest(){
 }
 
 /* ---------------- Clicks ---------------- */
+document.addEventListener('keydown',e=>{ if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('tr[data-act]')){ e.preventDefault(); e.target.click(); } });
 function onClick(e){
   const ph=e.target.closest('img[data-photo]'); if(ph && !e.target.closest('#dform')){ viewPhoto(ph.dataset.photo); return; }
   const b=e.target.closest('[data-act]'); if(!b) return;
   const act=b.dataset.act, v=b.dataset.v;
-  if(act==='open'){S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
-  else if(act==='home'){S.view='home';render();}
+  if(act==='open'){S.backBoard=(S.tab==='boards'&&S.view==='board')?S.board:null; S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
+  else if(act==='home'){S.view='home';S.tab='assets';S.backBoard=null;render();}
+  else if(act==='tab'){S.tab=v;S.view=v==='boards'?'boards':'home';render();window.scrollTo(0,0);}
+  else if(act==='board'){S.tab='boards';S.board=v;S.view='board';render();window.scrollTo(0,0);}
+  else if(act==='boards'){S.tab='boards';S.view='boards';render();}
+  else if(act==='cct'){S.asset=v;S.view='asset';render();window.scrollTo(0,0);}
+  else if(act==='editBoard'){openBoardEdit(v);}
+  else if(act==='newBoard'){openBoardEdit(null);}
+  else if(act==='pdfBoard'){boardPdf(S.boards[v]);}
+  else if(act==='beAdd'){E.b.circuits.push(blankCct()); render();}
+  else if(act==='beDel'){E.b.circuits.splice(+v,1); render();}
+  else if(act==='beUp'){const i=+v; if(i>0){const c=E.b.circuits; [c[i-1],c[i]]=[c[i],c[i-1]];} render();}
+  else if(act==='beCancel'){const n=E.orig; E=null; if(n&&S.boards[n]){S.board=n;S.view='board';} else S.view='boards'; S.tab='boards'; render();}
+  else if(act==='beSave'){saveBoard(b);}
+  else if(act==='beRemove'){removeBoard(b);}
   else if(act==='back'){S.view='asset';render();window.scrollTo(0,0);}
   else if(act==='sec'){S.section=v;S.view='form';render();window.scrollTo(0,0);}
   else if(act==='group'){S.group=v;render();}
@@ -696,7 +728,7 @@ function onClick(e){
   else if(act==='fillIR'){ const v='>'+irMax(); document.querySelectorAll('input[data-t="ir"]').forEach(i=>{i.value=v;F.vals[i.dataset.f]=v;markInput(i);}); updateResult(); }
   else if(act==='fillCont'){ document.querySelectorAll('input[data-t="ohm"]').forEach(i=>{i.value='OK';F.vals[i.dataset.f]='OK';markInput(i);}); updateResult(); }
   else if(act==='allY'){ F.fields.filter(f=>f.type==='ynna').forEach(f=>F.vals[f.id]='Y'); document.querySelectorAll('.checks .seg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v==='Y')); updateResult(); }
-  else if(act==='pdfOne') makePdf([S.assets[S.asset]]);
+  else if(act==='pdfOne') makePdf([A(S.asset)]);
   else if(act==='pdfList') makePdf(filteredAssets());
   else if(act==='csv') exportCsv();
   else if(act==='import') openImport();
@@ -1048,6 +1080,183 @@ function makePdf(assets){
   });
   const name=(assets.length===1?assets[0].tag:S.job+' '+(S.group!=='All'?S.group:'test sheets'))+' '+today()+'.pdf';
   download(name.replace(/[^\w\-. ()]/g,'_'), doc.output('blob'));
+}
+
+/* ================= DB schedules ================= */
+const A=tag=>S.assets[tag]||S.circuits[tag];
+const isSpare=c=>!String(c.desc||'').trim()||/^spare\b/i.test(String(c.desc).trim());
+const cctTag=(b,c)=>b.name+'/'+c.id;
+function circuitAsset(b,c){
+  const cb=c.cable||{}; const ph=c.ph||'';
+  const type=cb.type||(ph==='1'?'PVC/PVC 2C+E':ph==='3'?'PVC/PVC 4C+E':'');
+  const rcd=c.rcd&&c.rcd!=='N'?c.rcd:'';
+  return {kind:'circuit',tag:cctTag(b,c),board:b.name,cct:c.id,desc:c.desc||'(no description)',type:'Circuit',sheet:'CTS',
+    area:b.desc,fed:b.name,rcd:rcd||(c.rcd==='N'?'None':''),prot:[c.prot,rcd?'RCD '+rcd:''].filter(Boolean).join(' '),
+    cables:[{no:cb.no||'',type,size:cb.size||'',len:cb.len||''}],notes:c.notes?[c.notes]:[]};
+}
+function rebuildCircuits(){
+  const M={}; Object.values(S.boards).forEach(b=>(b.circuits||[]).forEach(c=>{ if(!c.asset||!S.assets[c.asset]) M[cctTag(b,c)]=circuitAsset(b,c); }));
+  S.circuits=M;
+}
+function cctStatus(b,c){
+  if(c.asset&&S.assets[c.asset]) return Object.assign({linked:true},assetStatus(S.assets[c.asset]));
+  if(isSpare(c)) return {st:'spare',done:0,total:0};
+  const a=S.circuits[cctTag(b,c)]; return a?assetStatus(a):{st:'none',done:0,total:0};
+}
+function boardSummary(b){
+  const r={none:0,part:0,done:0,fail:0,spare:0,n:0};
+  (b.circuits||[]).forEach(c=>{ const s=cctStatus(b,c); r[s.st]++; if(s.st!=='spare') r.n++; });
+  return r;
+}
+function tabBar(){
+  const nb=Object.keys(S.boards).length;
+  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab!=='boards'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button></div>`;
+}
+function viewBoards(){
+  if(S.loaded && S.loaded.b===false) return `<div class="card"><h2>Loading schedules…</h2></div>`;
+  const bs=Object.values(S.boards).sort((x,y)=>(x.order??999)-(y.order??999)||x.name.localeCompare(y.name));
+  return `<div class="actions">${S.canEdit?'<button class="btn" type="button" data-act="newBoard">+ Add board</button>':''}</div>
+  <div class="list">${bs.map(b=>{ const r=boardSummary(b); const st=r.fail?'fail':r.n&&r.done===r.n?'done':(r.done||r.part)?'part':'none';
+    return `<button class="row s-${st}" type="button" data-act="board" data-v="${esc(b.name)}"><span class="stripe"></span>
+      <span><span class="t1"><span class="tag">${esc(b.name)}</span><span class="d">${esc(b.supply||'')}</span></span>
+      <span class="d" style="display:block;color:var(--ink)">${esc(b.desc||'')}</span>
+      <span class="d">Fed from ${esc(b.fed||'?')} · ${(b.circuits||[]).length} circuits${r.spare?' ('+r.spare+' spare)':''}</span></span>
+      <span style="display:grid;gap:4px;justify-items:end"><span class="pill p-${st}">${ST_LABEL[st]}</span><span class="prog">${r.done}/${r.n}${r.fail?' · '+r.fail+' fail':''}</span></span></button>`;}).join('')
+    ||`<div class="card hint">No boards yet.${S.canEdit?' Add one with + Add board.':''}</div>`}</div>`;
+}
+function viewBoard(b){
+  const r=boardSummary(b);
+  return `<div class="actions"><button class="btn" type="button" data-act="boards">← All boards</button>
+    <button class="btn primary" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button>
+    ${S.canEdit?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(b.name)}">Edit schedule</button>`:''}</div>
+  <div class="card"><div class="sechead"><h2><span class="tag">${esc(b.name)}</span></h2><span class="prog">${r.done}/${r.n} tested${r.fail?' · '+r.fail+' fail':''}</span></div>
+    <div style="font-size:1.1rem;margin-top:4px">${esc(b.desc||'')}</div>
+    <div class="kv">${kv('Fed from',b.fed)}${kv('Supply',b.supply)}${kv('Location',b.location)}${kv('Circuits',(b.circuits||[]).length)}</div>
+    ${b.notes&&b.notes.length?`<ul class="flags">${b.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}</div>
+  <div class="card" style="padding:0"><div class="tablewrap"><table class="sched"><thead><tr><th>Cct</th><th>Description</th><th>Protection</th><th>RCD</th><th>Cable</th><th>Status</th></tr></thead><tbody>
+  ${(b.circuits||[]).map(c=>{ const s=cctStatus(b,c); const cb=c.cable||{};
+    const act=s.linked?`data-act="open" data-v="${esc(c.asset)}"`:s.st==='spare'?'':`data-act="cct" data-v="${esc(cctTag(b,c))}"`;
+    return `<tr class="${s.st==='spare'?'spare':'click s-'+s.st}" ${act} ${act?'tabindex="0" role="button"':''}>
+      <td class="tag">${esc(c.id)}</td><td>${esc(c.desc||'')}${c.asset?` <span class="tag small">${esc(c.asset)}</span>`:''}${c.notes?`<div class="d warnnote">⚠ ${esc(c.notes)}</div>`:''}</td>
+      <td>${esc(c.prot||'')}</td><td>${esc(c.rcd==='N'?'–':c.rcd||'')}</td>
+      <td class="d">${esc([cb.no,cb.size&&cb.size+'mm²'].filter(Boolean).join(' · '))}</td>
+      <td>${s.st==='spare'?'<span class="pill p-na">Spare</span>':`<span class="pill p-${s.st}">${ST_LABEL[s.st]}</span> <span class="prog">${s.done}/${s.total}</span>`}</td></tr>`;}).join('')}
+  </tbody></table></div></div>
+  <p class="hint">Tap a circuit to record tests. Circuits that feed an asset open that asset, so the cable is only tested once.</p>`;
+}
+/* ---- edit ---- */
+let E=null;
+const blankCct=()=>({id:'',desc:'',prot:'',rcd:'',cable:{no:'',type:'',size:'',len:''},asset:'',ph:'',notes:''});
+function openBoardEdit(name){
+  const b=name&&S.boards[name]? JSON.parse(JSON.stringify(S.boards[name])) : {name:'',desc:'',fed:'',supply:'',location:'',notes:[],circuits:[blankCct()],job:S.job,order:Object.keys(S.boards).length};
+  b.circuits=(b.circuits||[]).map(c=>Object.assign(blankCct(),c,{cable:Object.assign({no:'',type:'',size:'',len:''},c.cable||{})}));
+  E={orig:name||null,b}; S.tab='boards'; S.view='boardEdit'; render(); window.scrollTo(0,0);
+}
+function viewBoardEdit(){
+  const b=E.b; const tags=Object.keys(S.assets).sort();
+  const inp=(i,k,v,ph,w)=>`<input data-be="${i}" data-k="${k}" value="${esc(v||'')}" placeholder="${esc(ph||'')}" ${w?`style="width:${w}"`:''} aria-label="${esc(ph||k)}">`;
+  return `<div class="actions"><button class="btn" type="button" data-act="beCancel">← Cancel</button></div>
+  <div class="card test"><h2>${E.orig?'Edit '+esc(E.orig):'New board'}</h2>
+   <div class="fgrid">
+    <div class="field"><label>Board name</label>${inp('h','name',b.name,'e.g. DB3')}</div>
+    <div class="field"><label>Description</label>${inp('h','desc',b.desc,'What it supplies')}</div>
+    <div class="field"><label>Fed from</label>${inp('h','fed',b.fed,'e.g. MSB M8')}</div>
+    <div class="field"><label>Supply / main switch</label>${inp('h','supply',b.supply,'e.g. 160A MCCB')}</div>
+    <div class="field"><label>Location</label>${inp('h','location',b.location,'')}</div>
+   </div>
+   <div class="field"><label>Notes (one per line)</label><textarea data-be="h" data-k="notes" rows="2">${esc((b.notes||[]).join('\n'))}</textarea></div>
+  </div>
+  <div class="card" style="padding:8px"><div class="tablewrap"><table class="sched edit"><thead><tr><th></th><th>Cct</th><th>Description</th><th>Protection</th><th>RCD</th><th>Cable no.</th><th>Cable type</th><th>mm²</th><th>Feeds asset</th><th>Note</th><th></th></tr></thead><tbody>
+  ${b.circuits.map((c,i)=>`<tr><td><button class="btn" type="button" data-act="beUp" data-v="${i}" aria-label="Move up" ${i?'':'disabled'}>↑</button></td>
+    <td>${inp(i,'id',c.id,'No.','4.5em')}</td><td>${inp(i,'desc',c.desc,'Description','14em')}</td><td>${inp(i,'prot',c.prot,'e.g. 20A C','6em')}</td>
+    <td><select data-be="${i}" data-k="rcd" aria-label="RCD">${['','N','10mA','30mA','100mA','300mA'].map(o=>`<option value="${o}" ${c.rcd===o?'selected':''}>${o===''?'?':o==='N'?'None':o}</option>`).join('')}</select></td>
+    <td>${inp(i,'cable.no',c.cable.no,'Cable no.','9em')}</td>
+    <td><select data-be="${i}" data-k="cable.type" aria-label="Cable type"><option value=""></option>${[...new Set([...CABLE_TYPES,c.cable.type].filter(Boolean))].map(o=>`<option ${c.cable.type===o?'selected':''}>${esc(o)}</option>`).join('')}</select></td>
+    <td>${inp(i,'cable.size',c.cable.size,'mm²','4em')}</td>
+    <td><input data-be="${i}" data-k="asset" list="assetTags" value="${esc(c.asset||'')}" placeholder="optional" style="width:8em" aria-label="Asset tag"></td>
+    <td>${inp(i,'notes',c.notes,'','10em')}</td>
+    <td><button class="btn danger" type="button" data-act="beDel" data-v="${i}" aria-label="Remove circuit">✕</button></td></tr>`).join('')}
+  </tbody></table></div>
+  <datalist id="assetTags">${tags.map(t=>`<option value="${esc(t)}">`).join('')}</datalist>
+  <div class="actions"><button class="btn" type="button" data-act="beAdd">+ Add circuit</button></div></div>
+  <p class="hint">Linking a circuit to an asset means its tests are recorded on that asset. Test results stay attached to the circuit number – renumbering a circuit starts it fresh.</p>
+  <div class="actions"><button class="btn primary big" type="button" data-act="beSave">Save schedule</button>${E.orig?'<button class="btn danger" type="button" data-act="beRemove">Delete board</button>':''}</div>`;
+}
+document.addEventListener('input',e=>{
+  const t=e.target; if(!E||!t.dataset||t.dataset.be===undefined) return;
+  const k=t.dataset.k, i=t.dataset.be; const v=t.value;
+  if(i==='h'){ E.b[k]= k==='notes'? v.split('\n').map(x=>x.trim()).filter(Boolean) : v; return; }
+  const c=E.b.circuits[+i]; if(k.startsWith('cable.')) c.cable[k.slice(6)]=v; else c[k]=v;
+});
+document.addEventListener('change',e=>{ const t=e.target; if(E&&t.tagName==='SELECT'&&t.dataset&&t.dataset.be!==undefined) t.dispatchEvent(new Event('input',{bubbles:true})); });
+async function saveBoard(btn){
+  const b=E.b; b.name=String(b.name||'').trim().toUpperCase().replace(/\s+/g,'');
+  if(!b.name){ toast('Give the board a name'); return; }
+  if(!E.orig && S.boards[b.name]){ toast('There is already a board called '+b.name); return; }
+  b.circuits=b.circuits.filter(c=>String(c.id).trim()||String(c.desc).trim()).map(c=>Object.assign(c,{id:String(c.id).trim(),asset:String(c.asset||'').trim()}));
+  const ids=b.circuits.map(c=>c.id); const dup=ids.find((x,i)=>!x||ids.indexOf(x)!==i);
+  if(dup!==undefined){ toast(dup?'Circuit '+dup+' is listed twice':'Every circuit needs a number'); return; }
+  const bad=b.circuits.find(c=>c.asset&&!S.assets[c.asset]); if(bad){ toast('No asset called '+bad.asset); return; }
+  b.job=S.job; delete b._id;
+  const id=E.orig&&S.boards[E.orig]?S.boards[E.orig]._id:idOf(S.job,'DB~'+b.name);
+  btn.disabled=true;
+  try{ await S.db.doc('boards/'+id).set(b); toast('Schedule saved'); E=null; S.board=b.name; S.view='board'; S.tab='boards'; render(); }
+  catch(err){ btn.disabled=false; toast(err.code==='invalid_argument'?'Only admins can change schedules':'Could not save ('+err.code+')'); }
+}
+async function removeBoard(btn){
+  const b=S.boards[E.orig]; if(!b) return;
+  if(!confirm('Delete board '+b.name+' and its schedule? Test results already saved are kept.')) return;
+  btn.disabled=true;
+  try{ await S.db.doc('boards/'+b._id).delete(); toast('Board deleted'); E=null; S.view='boards'; render(); }
+  catch(err){ btn.disabled=false; toast('Could not delete ('+err.code+')'); }
+}
+/* ---- schedule card PDF ---- */
+function cctResults(b,c){
+  let a,ci=0;
+  if(c.asset&&S.assets[c.asset]){ a=S.assets[c.asset]; const i=(a.cables||[]).findIndex(x=>x.no&&c.cable&&x.no===c.cable.no); ci=i<0?0:i; }
+  else a=S.circuits[cctTag(b,c)];
+  if(!a) return {};
+  const L=k=>S.latest[a.tag+'|'+k]; const ir=L('c'+ci+'.ir'), zs=L('c'+ci+'.zs'), rc=L('rcd'), ct=L('c'+ci+'.ct');
+  let irMin=''; if(ir&&ir.values){ const ns=Object.entries(ir.values).filter(([k])=>k!=='tv').map(([,v])=>v);
+    const nums=ns.map(parseNum).filter(n=>!isNaN(n)); if(nums.length){ const m=Math.min(...nums); irMin=isFinite(m)?String(m):ns.find(v=>parseNum(v)===Infinity)||'>'; } }
+  const dates=[ir,zs,rc,ct].filter(Boolean).map(t=>t.testDate||t.at||'').sort(); const res=[ir,zs,rc,ct].filter(Boolean);
+  return {zs:zs&&zs.values&&zs.values.zs||'',ir:irMin,rcd:rc&&rc.values&&rc.values.t1||'',ct:ct?(ct.result==='fail'?'FAIL':'OK'):'',
+    date:dates.length?dates[dates.length-1]:'',by:res.length?res[res.length-1].testerName||'':'',fail:res.some(t=>t.result==='fail')};
+}
+function boardPdf(b){
+  if(!b) return; if(!window.jspdf){ toast('PDF library did not load – check signal and reload'); return; }
+  const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'mm',format:'a4',orientation:'landscape'});
+  const W=297,H=210,M=10; const job=S.jobs[S.job]||{};
+  const cols=[['Cct',16],['Description',78],['Protection',26],['RCD',14],['Cable',44],['mm²',13],['Cont.',13],['IR Mohm',17],['Zs ohm',15],['RCD ms',15],['Tested',26]];
+  let y;
+  const head=()=>{
+    doc.setFillColor(30,58,90); doc.rect(M,M,W-2*M,14,'F'); doc.setTextColor(255);
+    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text(pdfText('DISTRIBUTION BOARD SCHEDULE – '+b.name),M+3,M+9.3);
+    doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.text(pdfText((job.name||S.job||'')+' · '+S.job),W-M-3,M+9.3,{align:'right'});
+    doc.setTextColor(0); y=M+19;
+    doc.setFontSize(9); const info=[['Board',b.desc],['Fed from',b.fed],['Supply',b.supply],['Location',b.location],['Printed',fmtDate(new Date().toISOString())]].filter(x=>x[1]);
+    let x=M; info.forEach(([k,v])=>{ doc.setFont('helvetica','bold'); doc.text(pdfText(k+':'),x,y); const kw=doc.getTextWidth(k+': '); doc.setFont('helvetica','normal'); const t=pdfText(v); doc.text(t,x+kw,y); x+=kw+doc.getTextWidth(t)+8; });
+    y+=4; doc.setFillColor(232,236,241); doc.rect(M,y,W-2*M,7,'F'); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
+    let cx=M; cols.forEach(([t,w])=>{ doc.text(pdfText(t),cx+1.5,y+4.8); cx+=w; }); y+=7; doc.setFont('helvetica','normal');
+  };
+  head();
+  (b.circuits||[]).forEach((c,i)=>{
+    const r=isSpare(c)?{}:cctResults(b,c); const cb=c.cable||{};
+    const desc=doc.splitTextToSize(pdfText((c.desc||'')+(c.asset?' ['+c.asset+']':'')),cols[1][1]-3);
+    const cabl=doc.splitTextToSize(pdfText(cb.no||''),cols[4][1]-3);
+    const h=Math.max(6,3.6*Math.max(desc.length,cabl.length)+2.4);
+    if(y+h>H-M-8){ doc.addPage(); head(); }
+    if(i%2){ doc.setFillColor(247,248,250); doc.rect(M,y,W-2*M,h,'F'); }
+    const vals=[c.id,desc,c.prot||'',c.rcd==='N'?'-':c.rcd||'',cabl,cb.size||'',r.ct||'',r.ir||'',r.zs||'',r.rcd||'',r.date?fmtDate(r.date):''];
+    let cx=M; doc.setFontSize(8.5);
+    vals.forEach((v,j)=>{ if(j===10&&r.fail){ doc.setTextColor(198,47,47); v='FAIL '+v; } doc.text(Array.isArray(v)?v:pdfText(v),cx+1.5,y+4.2); doc.setTextColor(0); cx+=cols[j][1]; });
+    doc.setDrawColor(210); doc.line(M,y+h,W-M,y+h); y+=h;
+  });
+  doc.setFontSize(7.5); doc.setTextColor(100);
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){ doc.setPage(p); doc.text(pdfText('Results are the latest saved test for each circuit in the NZES Test Recorder. Page '+p+' of '+pages),M,H-M+2); }
+  const fn=`${S.job}_${b.name}_DB_schedule.pdf`;
+  download(fn,doc.output('blob'));
 }
 
 init();
