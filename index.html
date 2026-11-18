@@ -1812,7 +1812,7 @@ document.addEventListener('input',e=>{ if(e.target.id==='dq'){ S.dq=e.target.val
 let dwgWheelT=null;
 document.addEventListener('wheel',e=>{ const wrap=e.target.closest&&e.target.closest('#dwgwrap'); if(!wrap||S.view!=='dwg'||!WIDE()) return; e.preventDefault();
   const stage=$('#dwgstage'), cv=stage.querySelector('canvas'); if(!cv) return;
-  const z0=S.dwg.zoom||1, dy=e.deltaY*(e.deltaMode===1?33:e.deltaMode===2?300:1), z1=Math.min(8,Math.max(1,z0*Math.min(1.07,Math.max(0.93,Math.exp(-dy*0.0007))))); if(z1===z0) return; const k=z1/z0;
+  const z0=S.dwg.zoom||1, dy=e.deltaY*(e.deltaMode===1?33:e.deltaMode===2?300:1), z1=Math.min(8,Math.max(1,z0*Math.min(1.035,Math.max(0.965,Math.exp(-dy*0.00035))))); if(z1===z0) return; const k=z1/z0;
   const r=wrap.getBoundingClientRect(), sr=stage.getBoundingClientRect(); const px=e.clientX-sr.left, py=e.clientY-sr.top;
   const w=parseFloat(cv.style.width)*k, h=parseFloat(cv.style.height)*k;
   stage.classList.add('zooming'); cv.style.width=w+'px'; cv.style.height=h+'px'; stage.style.width=w+'px'; stage.style.height=h+'px';
