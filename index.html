@@ -622,8 +622,8 @@ function fieldsFor(a,sec){
   if(k==='st') return [
     {id:'mcc',label:'MCC / panel no.',type:'text',pre:a.fed},{id:'stype',label:'Starter type',type:'text',pre:a.starter},
     {id:'fuse',label:'Motor fuse / CB size',type:'text',pre:a.prot},{id:'cfuse',label:'Control fuse',type:'text'},
-    {id:'coil',label:'Coil voltage',type:'text'},{id:'cable',label:'Motor cable size',type:'text',pre:a.cables&&a.cables[0]?(a.cables[0].size+'mm²'):''},
-    {id:'ct',label:'CT ratio',type:'text'},{id:'ol',label:'Overload setting',type:'text',pre:a.ol},
+    {id:'cable',label:'Motor cable size',type:'text',pre:a.cables&&a.cables[0]?(a.cables[0].size+'mm²'):''},
+    {id:'ol',label:'Overload setting',type:'text',pre:a.ol},
     ...CHECKS_STARTER.map((c,i)=>({id:'sc'+i,label:c,type:'ynna',check:true}))];
   const c=(a.cables||[])[sec.cable]||{};
   const cores=coresFor(c.type);
