@@ -565,6 +565,9 @@ function coresFor(type){
 function isMotor(a){ return a.sheet==='MCTS'; }
 function is3ph(c){ return /3C\+E|4C\+E|VSD|1C \(|4C\b/i.test((c&&c.type)||''); }
 function isDriveOutput(c){ return /^(B\d\d(SC|FN)\d\d|\d{3}SC\d\d-)/i.test((c&&c.no)||''); }   // VSD output or fan-to-fan loop: drive/upstream cable protects it
+/* A measured fault loop is only required on socket-outlet circuits with no RCD; elsewhere it is optional (earth continuity covers it) */
+function isSocketCct(a){ return /socket|outlet|\bGPO\b|\bS\/O\b|power ?point|\bplug/i.test((a.desc||'')+' '+(a.type||'')); }
+function zsRequired(a){ return isSocketCct(a)&&!hasRcd(a); }
 function hasRcd(a){ return /RCD|RCBO/i.test(a.prot||''); }
 function needsIsolation(a){ return /SC\d|VSD|EC/i.test((a.starter||'')+' '+(a.model||'')+' '+a.tag) }
 
@@ -586,7 +589,7 @@ function sectionsFor(a){
     s.push({key:'c'+i+'.ir',title:'Insulation resistance',group:g,cable:i});
     if(!isSignal(c)){
       s.push({key:'c'+i+'.pol',title:is3ph(c)?'Polarity & phase sequence':'Polarity',group:g,cable:i});
-      if(!isDriveOutput(c)) s.push({key:'c'+i+'.zs',title:'Earth fault-loop impedance',group:g,cable:i});
+      if(!isDriveOutput(c)) s.push({key:'c'+i+'.zs',title:'Earth fault-loop impedance',group:g,cable:i,optional:!zsRequired(a)});
     }
     s.push({key:'c'+i+'.ck',title:'Installation checks',group:g,cable:i});
   });
@@ -716,9 +719,10 @@ function rebuildLatest(){
 }
 function assetStatus(a){
   const secs=sectionsFor(a); let done=0,fail=false,any=false;
-  for(const s of secs){ const t=S.latest[a.tag+'|'+s.key]; if(t){any=true; if(t.result==='fail') fail=true; else done++; } }
-  const st= fail?'fail': done===secs.length?'done': any?'part':'none';
-  return {st,done,total:secs.length};
+  let total=0;
+  for(const s of secs){ const t=S.latest[a.tag+'|'+s.key]; if(s.optional&&!t) continue; total++; if(t){any=true; if(t.result==='fail') fail=true; else done++; } }
+  const st= fail?'fail': (total>0&&done===total)?'done': any?'part':'none';
+  return {st,done,total};
 }
 const ST_LABEL={none:'Not started',part:'In progress',done:'Complete',fail:'Has a fail'};
 
@@ -901,7 +905,7 @@ function wireMulti(){
 function updateMulti(){
   if(!M) return; const map={pass:['PASS','var(--pass)'],fail:['FAIL','var(--fail)'],warn:['CHECK','var(--warn)'],rec:['Recorded','var(--pass)'],'':['','var(--muted)']}; let n=0;
   M.parts.forEach((p,i)=>{ const el=$('#mres'+i); if(!el) return; if(p.sec.key.endsWith('.zs')){ F=p; limitHint(); }
-    if(!pTouched(p)){ el.textContent='To do'; el.style.color='var(--muted)'; return; }
+    if(!pTouched(p)){ el.textContent=p.sec.optional?'Optional – not required here':'To do'; el.style.color='var(--muted)'; return; }
     if(!pChanged(p)){ el.textContent='Already saved'+(p.prev.result==='fail'?' – FAIL':''); el.style.color=p.prev.result==='fail'?'var(--fail)':'var(--muted)'; return; }
     const j=judge(p.a,p.sec,p.vals,false); const [t,c]=map[j.result]||map['']; el.textContent=t+(j.why?' — '+j.why:''); el.style.color=c; n++; });
   const s=$('#msum'); if(s) s.textContent=n?n+' test'+(n===1?'':'s')+' ready to save':''; const b=$('#saveBtn'); if(b) b.textContent=n?'Save '+n+' test'+(n===1?'':'s'):'Save';
@@ -918,7 +922,7 @@ async function saveMulti(){
 }
 /* ---- next untested ---- */
 function nextTarget(a){
-  const secs=sectionsFor(a); const s=secs.find(x=>!S.latest[a.tag+'|'+x.key]);
+  const secs=sectionsFor(a); const s=secs.find(x=>!x.optional&&!S.latest[a.tag+'|'+x.key]);
   if(s) return (s.cable!=null||s.key==='rcd')?{t:'multi',tag:a.tag,cable:s.cable||0,label:secs.filter(x=>!S.latest[a.tag+'|'+x.key]).length+' tests still to do here'}:{t:'sec',tag:a.tag,key:s.key,label:s.title};
   const bn=a.kind==='circuit'?a.board:(S.backBoard&&S.boards[S.backBoard]?S.backBoard:null);
   if(bn){ const b=S.boards[bn], cs=(b.circuits||[]).filter(c=>!isSpare(c)); const at=cs.findIndex(c=>(c.asset&&S.assets[c.asset]?c.asset:cctTag(b,c))===a.tag);
@@ -1268,7 +1272,7 @@ function viewAsset(a){
     <div class="sechead"><h3>${esc(g)}</h3>${ss[0].cable!=null&&a.cables&&a.cables[ss[0].cable]?`<small>${esc([a.cables[ss[0].cable].type,a.cables[ss[0].cable].size&&a.cables[ss[0].cable].size+'mm²',a.cables[ss[0].cable].len&&a.cables[ss[0].cable].len+'m'].filter(Boolean).join(' · '))}</small>`:''}</div>
     ${ss[0].cable!=null?`<div class="actions"><button class="btn primary" type="button" data-act="multi" data-v="${ss[0].cable}">Enter all on one screen</button></div>`:''}
     <div class="tiles">${ss.map(s=>{const t=S.latest[a.tag+'|'+s.key];
-      const r=t?t.result:''; const lab=t?({pass:'Pass',fail:'FAIL',na:'N/A',rec:'Recorded',warn:'Check'}[r]||'Saved'):'To do';
+      const r=t?t.result:''; const lab=t?({pass:'Pass',fail:'FAIL',na:'N/A',rec:'Recorded',warn:'Check'}[r]||'Saved'):s.optional?'Optional':'To do';
       return `<button class="tile ${r?'r-'+r:''}" type="button" data-act="sec" data-v="${esc(s.key)}">
         <span class="h"><span>${esc(s.title)}</span><span class="pill p-${r==='pass'||r==='rec'?'done':r==='fail'?'fail':r==='warn'?'warn':r==='na'?'na':'none'}">${lab}</span></span>
         ${t?`<span class="m">${t._pending?'⏳ waiting to upload · ':''}${esc(t.testerName||'')} · ${esc(fmtDate(t.testDate||t.at))}</span><span class="v">${esc(valSummary(a,s,t))}</span>`:'<span class="m">Tap to record</span>'}
@@ -1722,7 +1726,7 @@ function exportCsv(){
   const head=['job','asset','description','test','cable','result','test_date','tested_by','registration','instrument','serial','values','notes','office_notes','saved_at'];
   const rows=[];
   Object.values(S.assets).forEach(a=>sectionsFor(a).forEach(s=>{ const t=S.latest[a.tag+'|'+s.key];
-    rows.push([S.job,a.tag,a.desc,s.group+' – '+s.title,t?t.cable:'',t?t.result:'not done',t?t.testDate:'',t?t.testerName:'',t?t.licence:'',t?t.instrument:'',t?t.serial:'',t?Object.entries(t.values||{}).map(([k,v])=>k+'='+v).join('; '):'',t?t.notes:'',t?(t.officeNotes||''):'',t?t.at:'']); }));
+    rows.push([S.job,a.tag,a.desc,s.group+' – '+s.title,t?t.cable:'',t?t.result:s.optional?'not required':'not done',t?t.testDate:'',t?t.testerName:'',t?t.licence:'',t?t.instrument:'',t?t.serial:'',t?Object.entries(t.values||{}).map(([k,v])=>k+'='+v).join('; '):'',t?t.notes:'',t?(t.officeNotes||''):'',t?t.at:'']); }));
   download(S.job+' test results '+today()+'.csv',toCsv([head,...rows]));
 }
 
@@ -1791,7 +1795,7 @@ function makePdf(assets,opt){ opt=opt||{};
       secTitle('Cable continuity',L(ct.key)); grid(a,ct,L(ct.key),7); notes(L(ct.key));
       secTitle('Cable insulation resistance',L(ir.key)); grid(a,ir,L(ir.key),7); notes(L(ir.key));
       const po=secs.find(s=>s.key==='c'+i+'.pol'); secTitle(po.title,L(po.key)); checks(a,po,L(po.key)); notes(L(po.key));
-      const zs=secs.find(s=>s.key==='c'+i+'.zs'); if(zs){ secTitle('Earth fault-loop impedance',L(zs.key)); grid(a,zs,L(zs.key),5); notes(L(zs.key)); }
+      const zs=secs.find(s=>s.key==='c'+i+'.zs'); if(zs&&(!zs.optional||L(zs.key))){ secTitle('Earth fault-loop impedance',L(zs.key)); grid(a,zs,L(zs.key),5); notes(L(zs.key)); }
       secTitle('Installation checks',L(ck.key)); checks(a,ck,L(ck.key)); notes(L(ck.key));
     });
     const rc=secs.find(s=>s.key==='rcd'); if(rc){ secTitle('RCD operation',L('rcd')); grid(a,rc,L('rcd'),4); checks(a,rc,L('rcd')); notes(L('rcd')); }
