@@ -182,6 +182,17 @@ main.wide{max-width:1560px} main.full{max-width:none}
   #dwgsheet{display:none}
 }
 .dwgstage.zooming .dlink,.dwgstage.zooming .dwgcol{display:none}
+
+/* summary */
+.sumgrid{display:grid;gap:14px} @media (min-width:1100px){.sumgrid{grid-template-columns:1fr 1fr;align-items:start}}
+.sbar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:var(--line)}
+.b-done{background:var(--pass)}.b-part{background:var(--part)}.b-fail{background:var(--fail)}.b-none{background:var(--line)}
+.key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-left:8px;vertical-align:middle}
+table.sum td.bad{color:var(--fail);font-weight:700} table.sum tr.click{cursor:pointer} table.sum tr.click:hover td{background:rgba(127,127,127,.08)}
+.days{display:grid;grid-template-columns:repeat(14,1fr);gap:4px;height:120px;align-items:end}
+.days>div{display:grid;grid-template-rows:1fr auto auto;height:100%;justify-items:center;position:relative}
+.days span{align-self:end;width:70%;background:var(--part);border-radius:3px 3px 0 0;min-height:0}
+.days small{font-size:.7rem;color:var(--muted);position:absolute;top:0}.days em{font-style:normal;font-size:.7rem;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -774,6 +785,7 @@ function render(){
   else if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]){ body=viewDwg(); cls='full'; }
   else if(S.tab==='drawings') body=tabBar()+viewDrawings();
   else if(S.tab==='boards' && S.view==='board' && S.boards[S.board]){ body=tabBar()+viewBoard(S.boards[S.board]); cls='wide'; }
+  else if(S.tab==='summary'&&canSummary()){ body=tabBar()+viewSummary(); cls='wide'; }
   else if(S.tab==='boards') body=tabBar()+viewBoards();
   else body=tabBar()+viewHome();
   const pl0=$('#paneL'); const keepScroll=pl0&&split?pl0.scrollTop:null;
@@ -782,6 +794,53 @@ function render(){
   if(split){ markSel(); if(keepScroll==null){ const sel=$('#paneL .sel'); if(sel) sel.scrollIntoView({block:'center'}); } }
   if(S.view==='form') wireForm();
   if(S.view==='dwg' && S.dwg && S.drawings[S.dwg.id]) drawDwg();
+}
+
+/* ================= Job summary (admins + people an admin lists for the job) ================= */
+function canSummary(){ if(S.canEdit) return true; const l=((S.jobs[S.job]||{}).summaryUsers)||[]; const me=String(S.email||'').toLowerCase(); return !!me&&l.map(x=>String(x).toLowerCase()).includes(me); }
+function viewSummary(){
+  const all=Object.values(S.assets); const tot={none:0,part:0,done:0,fail:0}, tests={done:0,total:0};
+  const groups={}; const fails=[];
+  const addFail=a=>{ sectionsFor(a).forEach(s=>{ const t=S.latest[a.tag+'|'+s.key]; if(t&&t.result==='fail') fails.push({a,s,t}); }); };
+  all.forEach(a=>{ const s=assetStatus(a); tot[s.st]++; tests.done+=s.done; tests.total+=s.total; const g=a.group||a.area||'Other'; const G=groups[g]=groups[g]||{none:0,part:0,done:0,fail:0,n:0}; G[s.st]++; G.n++; if(s.st==='fail') addFail(a); });
+  Object.values(S.circuits).forEach(a=>{ if(assetStatus(a).st==='fail') addFail(a); });
+  const bs=Object.values(S.boards).sort((x,y)=>(x.order??999)-(y.order??999)); let bn=0,bd=0,bf=0;
+  const brow=bs.map(b=>{ const r=boardSummary(b); bn+=r.n; bd+=r.done; bf+=r.fail; return {b,r}; });
+  const live=S.tests.filter(t=>!t.voided); const by={};
+  live.forEach(t=>{ const k=t.testerName||'?'; const o=by[k]=by[k]||{n:0,fail:0,last:''}; o.n++; if(t.result==='fail') o.fail++; const d=t.testDate||(t.at||'').slice(0,10); if(d>o.last) o.last=d; });
+  const days=[]; for(let i=13;i>=0;i--){ const d=new Date(Date.now()-i*864e5).toISOString().slice(0,10); days.push({d,n:live.filter(t=>(t.testDate||(t.at||'').slice(0,10))===d).length}); }
+  const mx=Math.max(1,...days.map(x=>x.n));
+  const pct=(a,b)=>b?Math.round(a/b*100):0;
+  const bar=(o,n)=>`<div class="sbar" role="img" aria-label="${o.done} complete, ${o.part} in progress, ${o.fail} with a fail, ${o.none} not started">${['done','part','fail','none'].map(k=>o[k]?`<span class="b-${k}" style="width:${o[k]/n*100}%"></span>`:'').join('')}</div>`;
+  const n=all.length;
+  return `<div class="actions"><button class="btn" type="button" data-act="csv">Export results CSV</button><button class="btn" type="button" data-act="coc">CoC draft</button>${S.canEdit?'<button class="btn" type="button" data-act="sumAccess">Who can see this</button>':''}</div>
+  <div class="stats">
+    <div class="stat done"><b>${pct(tot.done,n)}%</b><span>Assets complete (${tot.done}/${n})</span></div>
+    <div class="stat part"><b>${pct(tests.done,tests.total)}%</b><span>Tests passed (${tests.done}/${tests.total})</span></div>
+    <div class="stat fail"><b>${fails.length}</b><span>Open failed tests</span></div>
+    <div class="stat"><b>${bn?pct(bd,bn)+'%':'–'}</b><span>DB circuits complete (${bd}/${bn})</span></div>
+  </div>
+  <div class="sumgrid">
+  <div class="card"><h3>By area</h3><div class="tablewrap"><table class="hist sum"><thead><tr><th>Area</th><th>Progress</th><th>Done</th><th>In prog.</th><th>Fail</th><th>Not started</th></tr></thead><tbody>
+    ${Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0])).map(([g,o])=>`<tr class="click" data-act="sumGroup" data-v="${esc(g)}" tabindex="0" role="button"><td><b>${esc(g)}</b></td><td style="min-width:120px">${bar(o,o.n)}</td><td>${o.done}/${o.n}</td><td>${o.part||''}</td><td class="${o.fail?'bad':''}">${o.fail||''}</td><td>${o.none||''}</td></tr>`).join('')}
+    </tbody></table></div><p class="hint"><span class="key b-done"></span> complete <span class="key b-part"></span> in progress <span class="key b-fail"></span> has a fail <span class="key b-none"></span> not started · tap an area to list its assets</p></div>
+  <div class="card"><h3>By board</h3>${brow.length?`<div class="tablewrap"><table class="hist sum"><thead><tr><th>Board</th><th>Progress</th><th>Done</th><th>Fail</th><th>Spare</th></tr></thead><tbody>
+    ${brow.map(({b,r})=>`<tr class="click" data-act="board" data-v="${esc(b.name)}" tabindex="0" role="button"><td><b class="tag">${esc(b.name)}</b></td><td style="min-width:120px">${bar(r,Math.max(1,r.n))}</td><td>${r.done}/${r.n}</td><td class="${r.fail?'bad':''}">${r.fail||''}</td><td>${r.spare||''}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="hint">No DB schedules for this job.</p>'}</div>
+  <div class="card"><h3>Open failed tests (${fails.length})</h3>${fails.length?`<div class="list">${fails.slice(0,60).map(({a,s,t})=>`<button class="row s-fail" type="button" data-act="open" data-v="${esc(a.tag)}"><span class="stripe"></span><span><span class="t1"><span class="tag">${esc(a.tag)}</span><span class="d">${esc(s.title)}</span></span><span class="d" style="display:block;color:var(--ink)">${esc(t.why||'Failed')}</span><span class="d">${esc(a.desc||'')} · ${esc(t.testerName||'')} · ${esc(fmtDate(t.testDate||t.at))}</span></span><span></span></button>`).join('')}</div>${fails.length>60?'<p class="hint">Showing the first 60.</p>':''}`:'<p class="hint">Nothing is currently failing.</p>'}</div>
+  <div class="card"><h3>Last 14 days</h3><div class="days" role="img" aria-label="Tests saved per day">${days.map(x=>`<div title="${esc(fmtDate(x.d))}: ${x.n} tests"><span style="height:${x.n?Math.max(6,x.n/mx*100):0}%"></span><small>${x.n||''}</small><em>${x.d.slice(8)}</em></div>`).join('')}</div>
+    <h3 style="margin-top:14px">By tester</h3>${Object.keys(by).length?`<div class="tablewrap"><table class="hist sum"><thead><tr><th>Tester</th><th>Tests saved</th><th>Fails recorded</th><th>Last test</th></tr></thead><tbody>
+    ${Object.entries(by).sort((a,b)=>b[1].n-a[1].n).map(([k,o])=>`<tr><td><b>${esc(k)}</b></td><td>${o.n}</td><td>${o.fail||''}</td><td>${esc(fmtDate(o.last))}</td></tr>`).join('')}</tbody></table></div>`:'<p class="hint">No tests saved yet.</p>'}</div>
+  </div>`;
+}
+function openSumAccess(){
+  const l=((S.jobs[S.job]||{}).summaryUsers)||[];
+  modal(`<h2>Who can see the summary – ${esc(S.job)}</h2><p class="hint">Admins always see the Summary tab. Add the email of anyone else who should see it for this job, one per line – use the email they sign in with. Everyone else just sees Assets, DB schedules and Drawings.</p>
+   <form id="saform" class="test"><div class="field"><label for="sa_list">Emails</label><textarea id="sa_list" rows="6" placeholder="name@nzelectricalsolutions.nz">${esc(l.join('\n'))}</textarea></div>
+   <div class="actions"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
+  $('#saform').addEventListener('submit',async e=>{ e.preventDefault(); const list=[...new Set($('#sa_list').value.split(/[\s,;]+/).map(x=>x.trim().toLowerCase()).filter(Boolean))];
+    const bad=list.find(x=>!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)); if(bad){ toast('Not an email: '+bad); return; }
+    try{ await S.db.doc('jobs/'+S.job).update({summaryUsers:list}); S.jobs[S.job]=Object.assign({},S.jobs[S.job],{summaryUsers:list}); closeModal(); toast('Saved'); render(); }catch(err){ toast('Could not save ('+(err.code||'error')+')'); } });
 }
 
 const WIDE=()=>window.innerWidth>=1100;
@@ -1039,6 +1098,8 @@ function onClick(e){
   else if(act==='editDev') openDevice(S.asset);
   else if(act==='profile') openProfile();
   else if(act==='limits') openLimits();
+  else if(act==='sumAccess') openSumAccess();
+  else if(act==='sumGroup'){ S.group=v; S.status='All'; S.q=''; S.tab='assets'; S.view='home'; render(); window.scrollTo(0,0); }
   else if(act==='syncNow'){ if(navigator.onLine===false) toast('Still offline'); else { NET.reloaders.forEach(f=>f()); syncPending(); } }
   else if(act==='coc') openCoc(v||null);
   else if(act==='void') voidTest(v,b);
@@ -1416,7 +1477,7 @@ function boardSummary(b){
 }
 function tabBar(){
   const nb=Object.keys(S.boards).length;
-  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab==='assets'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="drawings" aria-selected="${S.tab==='drawings'}">Drawings${Object.keys(S.drawings).length?' ('+Object.keys(S.drawings).length+')':''}</button></div>`;
+  return `<div class="tabs" role="tablist"><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="assets" aria-selected="${S.tab==='assets'}">Assets</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="boards" aria-selected="${S.tab==='boards'}">DB schedules${nb?' ('+nb+')':''}</button><button class="tabbtn" role="tab" type="button" data-act="tab" data-v="drawings" aria-selected="${S.tab==='drawings'}">Drawings${Object.keys(S.drawings).length?' ('+Object.keys(S.drawings).length+')':''}</button>${canSummary()?`<button class="tabbtn" role="tab" type="button" data-act="tab" data-v="summary" aria-selected="${S.tab==='summary'}">Summary</button>`:''}</div>`;
 }
 function viewBoards(){
   if(S.loaded && S.loaded.b===false) return `<div class="card"><h2>Loading schedules…</h2></div>`;
