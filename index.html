@@ -382,7 +382,7 @@ function wireLogin(){
 
 /* ---------------- Test definitions ---------------- */
 /* ================= Pass/fail limits (per job, admin-editable) ================= */
-const DEF_LIMITS={irMin:1,contMax:1,u0:230,mB:4,mC:7.5,mD:12.5,zsFactor:1,rphF:0.8,rcd1:300,rcd5:40,flcOver:0};
+const DEF_LIMITS={irMin:1,contMax:1,u0:230,mB:4,mC:7.5,mD:12.5,zsFactor:1,rphF:0.64,rcd1:300,rcd5:40,flcOver:0};
 function LIM(){ const j=(typeof S!=='undefined'&&S.jobs&&S.jobs[S.job])||{}; const o=Object.assign({},DEF_LIMITS); Object.entries(j.limits||{}).forEach(([k,v])=>{ const n=parseFloat(v); if(k in DEF_LIMITS&&isFinite(n)) o[k]=n; }); return o; }
 Object.defineProperty(window,'IR_PASS',{get:()=>LIM().irMin});
 Object.defineProperty(window,'CONT_PASS',{get:()=>LIM().contMax});
@@ -427,7 +427,7 @@ function openLimits(){
    ${f('mC','Type C trip multiple (× In)','')}
    ${f('mD','Type D trip multiple (× In)','')}
    ${f('zsFactor','Zs correction factor','1 = none. e.g. 0.8 to allow for a cold conductor')}
-   ${f('rphF','Dead-test factor','Dead test max = Zs max × this. 0.8 allows 20% for the supply')}
+   ${f('rphF','Dead-test factor','Dead test max = Zs max × this. AS/NZS 3000:2018 Table 8.2 uses 0.64')}
    ${f('rcd1','RCD max trip at 1× IΔn (ms)','')}
    ${f('rcd5','RCD max trip at 5× IΔn (ms)','')}
   </div><div class="actions"><button class="btn primary" type="submit">Save limits</button><button class="btn" type="button" id="lreset">Back to defaults</button><button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
@@ -567,7 +567,9 @@ function is3ph(c){ return /3C\+E|4C\+E|VSD|1C \(|4C\b/i.test((c&&c.type)||''); }
 function isDriveOutput(c){ return /^(B\d\d(SC|FN)\d\d|\d{3}SC\d\d-)/i.test((c&&c.no)||''); }   // VSD output or fan-to-fan loop: drive/upstream cable protects it
 /* A measured fault loop is only required on socket-outlet circuits with no RCD; elsewhere it is optional (earth continuity covers it) */
 function isSocketCct(a){ return /socket|outlet|\bGPO\b|\bS\/O\b|power ?point|\bplug/i.test((a.desc||'')+' '+(a.type||'')); }
-function zsRequired(a){ return isSocketCct(a)&&!hasRcd(a); }
+/* AS/NZS 3000:2018 cl. 8.3.9.1: EFLI test needed for socket-outlet circuits unless protected by an RCD of 30 mA or less */
+function rcd30(a){ const t=(a.rcd||'')+' '+(a.prot||''); if(!/RCD|RCBO|mA/i.test(t)) return false; const m=/(\d+)\s*mA/i.exec(t); return !!m && +m[1]<=30; }
+function zsRequired(a){ return isSocketCct(a)&&!rcd30(a); }
 function hasRcd(a){ return /RCD|RCBO/i.test(a.prot||''); }
 function needsIsolation(a){ return /SC\d|VSD|EC/i.test((a.starter||'')+' '+(a.model||'')+' '+a.tag) }
 
