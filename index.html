@@ -261,16 +261,32 @@ const UNIT = {ir:' MΩ',ohm:' Ω',z:' Ω',ms:' ms',amp:' A'};
 const CHECKS_CABLE = ['Cable tied','Cable labelled','Correct cable type / size','Core / ferrule numbers fitted','Correct gland','Lugged correctly','Segregation','Spare cores earthed','Correct colour code','Terminated as per drawings'];
 const CHECKS_STARTER = ['Nameplate fitted','MCC drawing correct','Colour coding correct'];
 
+const SIG_RE=/PAIR|\bPR\b|\d\s*PR|TRIPPLE|TRIPLE|THERMISTOR|SECURITY|MULTICOR|\bCORE\b|\d+\s*C\b(?!\+)|RS485|BELDEN/i;
+const EARTH_RE=/EARTH|WRICON|BARE|G\/Y/i;
+function isSignal(c){ const t=(c&&c.type)||''; return SIG_RE.test(t) && !/\dC\+E/i.test(t); }
+function isEarthCable(c){ return EARTH_RE.test((c&&c.type)||''); }
+function sigCores(type){
+  const t=(type||'').toUpperCase(); let n=0, m;
+  if(/TRIPPLE|TRIPLE/.test(t)) n=3;
+  else if((m=t.match(/(\d+)\s*(PAIR|PR)/))) n=+m[1]*2;
+  else if(/PAIR|THERMISTOR/.test(t)) n=2;
+  else if((m=t.match(/(\d+)\s*(C\b|CORE)/))) n=+m[1];
+  else if(/SECURITY/.test(t)) n=6;
+  n=Math.min(n||4,12);
+  return Array.from({length:n},(_,i)=>'Core '+(i+1));
+}
 function coresFor(type){
   const t=(type||'').toUpperCase();
+  if(EARTH_RE.test(t)) return {cont:['Earth conductor'], ir:[]};
+  if(isSignal({type})) return {cont:[...sigCores(type),'Screen / drain'], ir:['Core–core','All cores–screen/earth']};
   if(/2C\+E/.test(t)) return {cont:['L','N','E'], ir:['P-N','P-E','N-E']};
   if(/3C\+E/.test(t)||/VSD/.test(t)) return {cont:['L1','L2','L3','E'], ir:['R-Y','Y-B','R-B','R-E','Y-E','B-E']};
   if(/4C\+E/.test(t)) return {cont:['L1','L2','L3','N','E'], ir:['R-Y','Y-B','R-B','P-N','P-E','N-E']};
   return {cont:['L1','L2','L3','N','E'], ir:['R-Y','Y-B','R-B','P-N','P-E']};
 }
 function isMotor(a){ return a.sheet==='MCTS'; }
-function is3ph(c){ return /3C\+E|4C\+E|VSD/i.test((c&&c.type)||''); }
-function isDriveOutput(c){ return /^B\d\d(SC|FN)\d\d/i.test((c&&c.no)||''); }   // VSD output or fan-to-fan loop: drive/upstream cable protects it
+function is3ph(c){ return /3C\+E|4C\+E|VSD|1C \(|4C\b/i.test((c&&c.type)||''); }
+function isDriveOutput(c){ return /^(B\d\d(SC|FN)\d\d|\d{3}SC\d\d-)/i.test((c&&c.no)||''); }   // VSD output or fan-to-fan loop: drive/upstream cable protects it
 function hasRcd(a){ return /RCD|RCBO/i.test(a.prot||''); }
 function needsIsolation(a){ return /SC\d|VSD|EC/i.test((a.starter||'')+' '+(a.model||'')+' '+a.tag) }
 
@@ -288,9 +304,12 @@ function sectionsFor(a){
   cs.forEach((c,i)=>{
     const g = 'Cable '+(cs.length>1?(i+1)+' of '+cs.length+': ':'')+(c.no||'(no cable no.)');
     s.push({key:'c'+i+'.ct',title:'Continuity',group:g,cable:i});
+    if(isEarthCable(c)){ s.push({key:'c'+i+'.ck',title:'Installation checks',group:g,cable:i}); return; }
     s.push({key:'c'+i+'.ir',title:'Insulation resistance',group:g,cable:i});
-    s.push({key:'c'+i+'.pol',title:is3ph(c)?'Polarity & phase sequence':'Polarity',group:g,cable:i});
-    if(!isDriveOutput(c)) s.push({key:'c'+i+'.zs',title:'Earth fault-loop impedance',group:g,cable:i});
+    if(!isSignal(c)){
+      s.push({key:'c'+i+'.pol',title:is3ph(c)?'Polarity & phase sequence':'Polarity',group:g,cable:i});
+      if(!isDriveOutput(c)) s.push({key:'c'+i+'.zs',title:'Earth fault-loop impedance',group:g,cable:i});
+    }
     s.push({key:'c'+i+'.ck',title:'Installation checks',group:g,cable:i});
   });
   if(hasRcd(a)) s.push({key:'rcd',title:'RCD operation',group:'Protection & function'});
