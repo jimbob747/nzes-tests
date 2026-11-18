@@ -1213,6 +1213,7 @@ function viewHome(){
   <div class="chips" role="group" aria-label="Status">${['All','none','part','fail','done'].map(s=>`<button class="chip" type="button" data-act="status" data-v="${s}" aria-pressed="${S.status===s}">${s==='All'?'Any status':ST_LABEL[s]}</button>`).join('')}</div>
   <div class="actions">
     <button class="btn primary office" type="button" data-act="pdfList" ${list.length?'':'disabled'}>Test sheets PDF (${list.length})</button>
+    <button class="btn office" type="button" data-act="pdfListNN" ${list.length?'':'disabled'}>PDF without notes</button>
     <button class="btn office" type="button" data-act="csv">Export results CSV</button>
     ${S.canEdit?'<button class="btn office" type="button" data-act="limits">Test limits</button><button class="btn office" type="button" data-act="addDev">+ Add device</button><button class="btn office" type="button" data-act="import">Import CSV</button>':''}
   </div>
@@ -1247,7 +1248,7 @@ function viewAsset(a){
   const sl={};secs.forEach(s=>sl[s.key]=s);
   return `
   <div class="actions">${a.kind==='circuit'?`<button class="btn" type="button" data-act="board" data-v="${esc(a.board)}">← ${esc(a.board)} schedule</button>`:`${S.backBoard&&S.boards[S.backBoard]?`<button class="btn" type="button" data-act="board" data-v="${esc(S.backBoard)}">← ${esc(S.backBoard)} schedule</button>`:''}<button class="btn" type="button" data-act="home">← All assets</button>`}
-    <button class="btn primary office" type="button" data-act="pdfOne">Test sheet PDF</button>${dwgButtonForAsset(a)}<button class="btn" type="button" data-act="defNew">Raise a defect</button>
+    <button class="btn primary office" type="button" data-act="pdfOne">Test sheet PDF</button><button class="btn office" type="button" data-act="pdfOneNN">PDF without notes</button>${dwgButtonForAsset(a)}<button class="btn" type="button" data-act="defNew">Raise a defect</button>
     ${S.canEdit&&a.kind!=='circuit'?'<button class="btn office" type="button" data-act="editDev">Edit device</button>':''}${S.canEdit&&a.kind==='circuit'?`<button class="btn office" type="button" data-act="editBoard" data-v="${esc(a.board)}">Edit schedule</button>`:''}</div>
   <div class="card">
     <div class="sechead"><h2><span class="tag">${esc(a.tag)}</span></h2><span class="pill p-${st.st}">${ST_LABEL[st.st]} · ${st.done}/${st.total}</span></div>
@@ -1274,7 +1275,7 @@ function viewAsset(a){
       </button>`;}).join('')}</div>`).join('')}
   <div class="card"><h3>History</h3>
    ${hist.length?`<div class="tablewrap"><table class="hist"><thead><tr><th>Date</th><th>Test</th><th>By</th><th>Result</th><th>Values</th>${S.canEdit?'<th></th>':''}</tr></thead><tbody>
-   ${hist.map(t=>{const s=sl[t.section]; return `<tr style="${t.voided?'opacity:.5;text-decoration:line-through':''}"><td>${esc(fmtDate(t.testDate||t.at))}</td><td>${esc(s?(s.group.startsWith('Cable')&&secs.filter(x=>x.cable!=null).length>3?s.group.split(':')[0]+' ':'')+s.title:t.section)}</td><td>${esc(t.testerName||'')}</td><td>${esc(t.result||'')}</td><td class="v">${esc(s?valSummary(a,s,t):'')}${t.notes?' – '+esc(t.notes):''}${S.canEdit&&t.officeNotes?`<div class="hint">Office note (not printed): ${esc(t.officeNotes)}</div>`:''}</td>${S.canEdit&&!t.voided?`<td><button class="btn danger" type="button" data-act="void" data-v="${esc(t._id)}">Void</button></td>`:S.canEdit?'<td></td>':''}</tr>`}).join('')}
+   ${hist.map(t=>{const s=sl[t.section]; return `<tr style="${t.voided?'opacity:.5;text-decoration:line-through':''}"><td>${esc(fmtDate(t.testDate||t.at))}</td><td>${esc(s?(s.group.startsWith('Cable')&&secs.filter(x=>x.cable!=null).length>3?s.group.split(':')[0]+' ':'')+s.title:t.section)}</td><td>${esc(t.testerName||'')}</td><td>${esc(t.result||'')}</td><td class="v">${esc(s?valSummary(a,s,t):'')}${t.notes?' – '+esc(t.notes):''}${S.canEdit&&t.officeNotes?`<div class="hint">Office note (not printed): ${esc(t.officeNotes)}</div>`:''}</td>${S.canEdit&&!t.voided?`<td>${t.notes&&!t._pending?`<button class="btn" type="button" data-act="noteOffice" data-v="${esc(t._id)}">Note → office</button> `:''}<button class="btn danger" type="button" data-act="void" data-v="${esc(t._id)}">Void</button></td>`:S.canEdit?'<td></td>':''}</tr>`}).join('')}
    </tbody></table></div>`:'<p class="hint">No tests recorded yet. Each test you save is kept here with who did it and when; the test sheet always uses the latest one.</p>'}
   </div>`;
 }
@@ -1433,6 +1434,8 @@ function onClick(e){
   else if(act==='allY'){ F.fields.filter(f=>f.type==='ynna').forEach(f=>F.vals[f.id]='Y'); document.querySelectorAll('.checks .seg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v==='Y')); updateResult(); }
   else if(act==='pdfOne') makePdf([A(S.asset)]);
   else if(act==='pdfList') makePdf(filteredAssets());
+  else if(act==='pdfOneNN') makePdf([A(S.asset)],{noNotes:true});
+  else if(act==='pdfListNN') makePdf(filteredAssets(),{noNotes:true});
   else if(act==='csv') exportCsv();
   else if(act==='import') openImport();
   else if(act==='addDev') openDevice(null);
@@ -1444,11 +1447,22 @@ function onClick(e){
   else if(act==='syncNow'){ if(navigator.onLine===false) toast('Still offline'); else { NET.reloaders.forEach(f=>f()); syncPending(); } }
   else if(act==='coc') openCoc(v||null);
   else if(act==='void') voidTest(v,b);
+  else if(act==='noteOffice') noteToOffice(v,b);
   else if(act==='close') closeModal();
   else if(act==='copyLink'){ try{ navigator.clipboard.writeText(APP_URL).then(()=>toast('Link copied – paste it into Chrome'),()=>toast(APP_URL)); }catch(_){ toast(APP_URL); } }
 }
 document.addEventListener('input',e=>{ if(e.target.id==='q'){ S.q=e.target.value; const pos=e.target.selectionStart; render(); const q=$('#q'); if(q){q.focus(); try{q.setSelectionRange(pos,pos);}catch(_){}} } });
 
+async function noteToOffice(id,b){
+  const t=(S.tests||[]).find(x=>x._id===id); if(!t||!t.notes||t.voided) return;
+  if(!navigator.onLine){ toast('Needs signal – try again when online'); return; }
+  if(b.dataset.confirm!=='1'){ b.dataset.confirm='1'; b.textContent='Tap again to move'; setTimeout(()=>{ if(b.isConnected){b.dataset.confirm='';b.textContent='Note → office';} },4000); return; }
+  const rec=Object.assign({},t); delete rec._id; delete rec._pending; delete rec.voided; delete rec.voidedAt;
+  rec.officeNotes=[t.officeNotes,t.notes].filter(Boolean).join(' | '); rec.notes=''; rec.noteMovedBy=S.profile.name||S.email||''; rec.noteMovedAt=new Date().toISOString();
+  b.disabled=true;
+  try{ await S.db.collection('tests').add(rec); await S.db.doc('tests/'+id).update({voided:true,voidedAt:new Date().toISOString()}); toast('Note moved to office note – it will no longer print'); }
+  catch(e){ b.disabled=false; toast('Could not move the note ('+(e.code||e.message||'error')+')'); }
+}
 async function voidTest(id,b){
   if(b.dataset.confirm!=='1'){ b.dataset.confirm='1'; b.textContent='Tap again to void'; setTimeout(()=>{ if(b.isConnected){b.dataset.confirm='';b.textContent='Void';} },4000); return; }
   try{ await S.db.doc('tests/'+id).update({voided:true,voidedAt:new Date().toISOString()}); toast('Record voided'); }catch(e){ toast('Could not void ('+e.code+')'); }
@@ -1714,7 +1728,7 @@ function exportCsv(){
 
 /* ---------------- PDF test sheets ---------------- */
 function pdfText(s){ return String(s??'').replace(/Δ/g,'d').replace(/Ω/g,'ohm').replace(/MΩ/g,'Mohm').replace(/²/g,'2').replace(/[–—]/g,'-').replace(/[^\x20-\x7E -ÿ]/g,''); }
-function makePdf(assets){
+function makePdf(assets,opt){ opt=opt||{};
   if(!window.jspdf){ toast('PDF library did not load – check signal and reload'); return; }
   const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'mm',format:'a4'});
   const job=S.jobs[S.job]||{}; const W=210,M=12; let y=0, first=true;
@@ -1757,7 +1771,7 @@ function makePdf(assets){
       const v=rec&&rec.values?rec.values[x.id]||'':''; doc.setFont('helvetica','bold'); if(v==='N') doc.setTextColor(198,47,47);
       doc.text(v==='Y'?'YES':v==='N'?'NO':v,X+cw-2,y+4.2,{align:'right'}); doc.setTextColor(0); doc.setFont('helvetica','normal'); }); y+=6; }
   }
-  function notes(rec){ if(rec&&(rec.notes||rec.why)){ ensure(6); doc.setFontSize(7.5); doc.setTextColor(80); doc.text(doc.splitTextToSize(pdfText([rec.why,rec.notes].filter(Boolean).join(' - ')),W-2*M),M,y+3.5); doc.setTextColor(0); y+=5; } }
+  function notes(rec){ if(rec&&opt.noNotes) rec={why:rec.why}; if(rec&&(rec.notes||rec.why)){ ensure(6); doc.setFontSize(7.5); doc.setTextColor(80); doc.text(doc.splitTextToSize(pdfText([rec.why,rec.notes].filter(Boolean).join(' - ')),W-2*M),M,y+3.5); doc.setTextColor(0); y+=5; } }
   assets.forEach(a=>{
     const secs=sectionsFor(a); const st=assetStatus(a); const L=k=>S.latest[a.tag+'|'+k];
     const status = st.st==='done'?'COMPLETE':st.st==='fail'?'CONTAINS FAILED RESULT':'INCOMPLETE - '+st.done+' of '+st.total+' tests recorded';
