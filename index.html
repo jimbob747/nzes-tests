@@ -273,8 +273,152 @@ function wireLogin(){
 }
 
 /* ---------------- Test definitions ---------------- */
-const IR_PASS = 1.0;     // MΩ minimum (AS/NZS 3000)
-const CONT_PASS = 1.0;   // Ω maximum
+/* ================= Pass/fail limits (per job, admin-editable) ================= */
+const DEF_LIMITS={irMin:1,contMax:1,u0:230,mB:4,mC:7.5,mD:12.5,zsFactor:1,rcd1:300,rcd5:40,flcOver:0};
+function LIM(){ const j=(typeof S!=='undefined'&&S.jobs&&S.jobs[S.job])||{}; const o=Object.assign({},DEF_LIMITS); Object.entries(j.limits||{}).forEach(([k,v])=>{ const n=parseFloat(v); if(k in DEF_LIMITS&&isFinite(n)) o[k]=n; }); return o; }
+Object.defineProperty(window,'IR_PASS',{get:()=>LIM().irMin});
+Object.defineProperty(window,'CONT_PASS',{get:()=>LIM().contMax});
+/* Read rating and curve out of a protection string: "20A C", "C20", "S201-C6", "NSX250F 3P 200A", "TeSys GV2L20 25A" */
+function parseProt(p){
+  p=String(p||'').replace(/RCD.*$/i,''); const r={In:'',curve:''};
+  let m=/(\d+(?:\.\d+)?)\s*A\s*([BCD])\b/i.exec(p); if(m){ r.In=m[1]; r.curve=m[2].toUpperCase(); return r; }
+  m=/(?:^|[\s-])([BCD])\s?(\d{1,3})(?:\s*A)?\b/.exec(p); if(m){ r.In=m[2]; r.curve=m[1]; return r; }
+  const all=[...p.matchAll(/(\d+(?:\.\d+)?)\s*A\b/gi)]; if(all.length) r.In=all[all.length-1][1];
+  if(/NSX|\bNS\d|MCCB|MTZ|GV\d|MS1\d\d/i.test(p)) r.curve='MCCB'; else if(/FUSE|HRC|gG/i.test(p)) r.curve='Fuse';
+  return r;
+}
+/* Zs max from Uo / (multiple x In). Only for B/C/D MCBs - MCCBs and fuses need the maker's figure. */
+function zsCalc(vals){
+  const L=LIM(); const In=parseNum(vals.In), m={B:L.mB,C:L.mC,D:L.mD}[vals.curve];
+  if(!m||!isFinite(In)||In<=0) return null;
+  const z=L.u0/(m*In)*L.zsFactor; return {z:Math.round(z*100)/100,txt:`${L.u0} V ÷ (${m} × ${In} A)${L.zsFactor!==1?' × '+L.zsFactor:''}`};
+}
+function zsMaxFor(vals){ const e=parseNum(vals.zmax); if(isFinite(e)) return {z:e,src:'entered'}; const c=zsCalc(vals); return c?{z:c.z,src:'calc',txt:c.txt}:null; }
+function limitHint(){
+  const el=document.getElementById('zsHint'); if(!el||!F) return;
+  const c=zsCalc(F.vals), e=parseNum(F.vals.zmax);
+  el.textContent= isFinite(e)?('Using the Zs max you entered ('+F.vals.zmax+' Ω).'+(c?' Calculated would be '+c.z+' Ω.':''))
+    : c?('Zs max calculated: '+c.txt+' = '+c.z+' Ω. Type a Zs max to override it.')
+    : (F.vals.curve==='MCCB'||F.vals.curve==='Fuse')?'MCCB / fuse / motor CB: enter Zs max from the maker\'s data or your copy of AS/NZS 3000 – it is not calculated.'
+    : 'Enter the rating and pick the curve (B/C/D) to calculate Zs max, or type it in.';
+}
+function openLimits(){
+  const L=LIM(); const f=(id,label,hint)=>`<div class="field"><label for="l_${id}">${label}</label><input id="l_${id}" inputmode="decimal" value="${esc(L[id])}"><span class="hint">${hint}</span></div>`;
+  modal(`<h2>Test limits – ${esc(S.job)}</h2><p class="hint">Used to mark readings pass or fail as they are typed, on every device, for this job. The defaults are common figures – <b>check them against your own copy of AS/NZS 3000 / 3017 and the device maker's data</b> before relying on them.</p>
+  <form id="lform" class="test"><div class="fgrid">
+   ${f('irMin','Insulation resistance min (MΩ)','Below this fails')}
+   ${f('contMax','Continuity max (Ω)','Above this fails')}
+   ${f('u0','Nominal voltage Uo (V)','For the Zs calculation')}
+   ${f('mB','Type B trip multiple (× In)','Zs max = Uo ÷ (multiple × In)')}
+   ${f('mC','Type C trip multiple (× In)','')}
+   ${f('mD','Type D trip multiple (× In)','')}
+   ${f('zsFactor','Zs correction factor','1 = none. e.g. 0.8 to allow for a cold conductor')}
+   ${f('rcd1','RCD max trip at 1× IΔn (ms)','')}
+   ${f('rcd5','RCD max trip at 5× IΔn (ms)','')}
+  </div><div class="actions"><button class="btn primary" type="submit">Save limits</button><button class="btn" type="button" id="lreset">Back to defaults</button><button class="btn" type="button" data-act="close">Cancel</button></div></form>`);
+  $('#lreset').addEventListener('click',()=>{ Object.entries(DEF_LIMITS).forEach(([k,v])=>{ const el=$('#l_'+k); if(el) el.value=v; }); });
+  $('#lform').addEventListener('submit',async e=>{ e.preventDefault(); const o={};
+    for(const k of Object.keys(DEF_LIMITS)){ const el=$('#l_'+k); if(!el) continue; const n=parseFloat(el.value); if(!isFinite(n)||n<=0){ toast('Enter a number above 0 for every limit'); el.focus(); return; } o[k]=n; }
+    try{ await S.db.doc('jobs/'+S.job).update({limits:o}); S.jobs[S.job]=Object.assign({},S.jobs[S.job],{limits:o}); closeModal(); toast('Limits saved'); render(); }
+    catch(err){ toast('Could not save ('+(err.code||'error')+')'); } });
+}
+
+/* ================= Certificate of Compliance draft ================= */
+function cctAsset(b,c){
+  if(c.asset&&S.assets[c.asset]){ const a=S.assets[c.asset]; const i=(a.cables||[]).findIndex(x=>x.no&&c.cable&&x.no===c.cable.no); return [a,i<0?0:i]; }
+  return [S.circuits[cctTag(b,c)],0];
+}
+function cctFull(b,c){
+  const r=cctResults(b,c); const [a,ci]=cctAsset(b,c); if(!a) return r;
+  const L=k=>S.latest[a.tag+'|'+k]; const pol=L('c'+ci+'.pol'), zs=L('c'+ci+'.zs'), rc=L('rcd');
+  r.pol=pol?(pol.result==='fail'?'FAIL':pol.result==='na'?'N/A':'OK'):'';
+  r.zmax=zs&&zs.values&&zs.values.zmax||''; r.t5=rc&&rc.values&&rc.values.t5||'';
+  r.tests=sectionsFor(a).map(s=>L(s.key)).filter(Boolean);
+  return r;
+}
+function openCoc(pre){
+  const P=S.profile, job=S.jobs[S.job]||{}; const bs=Object.values(S.boards).sort((x,y)=>(x.order??999)-(y.order??999));
+  const C=job.coc||{};
+  const seg=(id,opts,val)=>`<select id="c_${id}">${opts.map(o=>`<option ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  modal(`<h2>Certificate of Compliance – draft</h2><p class="hint">Builds a draft CoC with the test schedule from the saved results. It is <b>not valid until the certifier has checked and signed it</b>. Check the layout against the NZES CoC form before issuing.</p>
+  <form id="cform" class="test">
+   <div class="field"><label>Boards covered</label><div class="checks" style="max-height:170px;overflow:auto">${bs.map(b=>{const r=boardSummary(b);return `<label class="checkrow" style="cursor:pointer"><span><input type="checkbox" name="cb" value="${esc(b.name)}" ${(!pre||pre===b.name)&&(pre||bs.length<4)?'checked':''}> <span class="tag">${esc(b.name)}</span> ${esc(b.desc||'')}</span><span class="prog">${r.done}/${r.n}${r.fail?' · '+r.fail+' fail':''}</span></label>`;}).join('')}</div></div>
+   <div class="fgrid">
+    <div class="field" style="grid-column:span 2"><label for="c_addr">Installation address</label><input id="c_addr" value="${esc(C.addr||job.location||'')}"></div>
+    <div class="field"><label for="c_client">Client / owner</label><input id="c_client" value="${esc(C.client||job.client||'')}"></div>
+    <div class="field"><label for="c_ref">Certificate no.</label><input id="c_ref" value="${esc(S.job+'-COC-')}"></div>
+    <div class="field"><label for="c_type">Type of work</label>${seg('type',['New installation','Addition','Alteration','Repair / replacement'],C.type)}</div>
+    <div class="field"><label for="c_risk">Risk category</label>${seg('risk',['General','Low','High (inspection required)'],C.risk)}</div>
+    <div class="field"><label for="c_std">Installed to</label>${seg('std',['AS/NZS 3000 Part 2','AS/NZS 3000 Part 1 (certified design)'],C.std)}</div>
+    <div class="field"><label for="c_mfr">Relies on manufacturer's instructions</label>${seg('mfr',['No','Yes'],C.mfr)}</div>
+    <div class="field"><label for="c_earth">Supply system</label>${seg('earth',['MEN – 230/400 V','Other (see description)'],C.earth)}</div>
+    <div class="field"><label for="c_date">Date</label><input id="c_date" type="date" value="${today()}"></div>
+    <div class="field"><label for="c_name">Certifier name</label><input id="c_name" value="${esc(P.name||'')}"></div>
+    <div class="field"><label for="c_lic">EWRB registration no.</label><input id="c_lic" value="${esc(P.licence||'')}"></div>
+   </div>
+   <div class="field"><label for="c_desc">Description of the work</label><textarea id="c_desc" rows="3" placeholder="What was installed, altered or connected">${esc(C.desc||'')}</textarea></div>
+   <div class="actions"><button class="btn primary" type="submit">Make draft PDF</button><button class="btn" type="button" data-act="close">Cancel</button></div>
+  </form>`);
+  $('#cform').addEventListener('submit',e=>{ e.preventDefault();
+    const names=[...document.querySelectorAll('#cform input[name="cb"]:checked')].map(x=>x.value); if(!names.length){ toast('Tick at least one board'); return; }
+    const g=id=>$('#c_'+id).value.trim(); const o={addr:g('addr'),client:g('client'),ref:g('ref'),type:g('type'),risk:g('risk'),std:g('std'),mfr:g('mfr'),earth:g('earth'),date:g('date'),name:g('name'),lic:g('lic'),desc:g('desc')};
+    if(!o.desc){ toast('Describe the work'); $('#c_desc').focus(); return; }
+    if(S.canEdit){ const keep={addr:o.addr,client:o.client,type:o.type,risk:o.risk,std:o.std,mfr:o.mfr,earth:o.earth,desc:o.desc}; S.db.doc('jobs/'+S.job).update({coc:keep}).then(()=>{ S.jobs[S.job]=Object.assign({},S.jobs[S.job],{coc:keep}); }).catch(()=>{}); }
+    closeModal(); cocPdf(names.map(n=>S.boards[n]).filter(Boolean),o); });
+}
+function cocPdf(boards,o){
+  if(!window.jspdf){ toast('PDF library did not load – check signal and reload'); return; }
+  const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
+  const job=S.jobs[S.job]||{}; const L=LIM(); const T=s=>pdfText(s);
+  // gather
+  let n=0,done=0,fail=0; const open=[]; const insts={}, testers={};
+  const rows=boards.map(b=>({b,cs:(b.circuits||[]).filter(c=>!isSpare(c)).map(c=>{ const s=cctStatus(b,c), r=cctFull(b,c); n++; if(s.st==='done') done++; else { if(s.st==='fail') fail++; open.push(b.name+'/'+c.id+' '+(c.desc||'')+' – '+(s.st==='fail'?'FAIL':s.st==='part'?'part tested '+s.done+'/'+s.total:'not tested')); }
+    (r.tests||[]).forEach(t=>{ if(t.instrument) insts[[t.instrument,t.serial,t.calDue].join('|')]=t; if(t.testerName) testers[t.testerName+(t.licence?' ('+t.licence+')':'')]=1; }); return {c,s,r}; })}));
+  const W=210,M=14; let y=M;
+  doc.setFillColor(30,58,90); doc.rect(M,y,W-2*M,16,'F'); doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text('CERTIFICATE OF COMPLIANCE',M+4,y+10.5);
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.text(T('NZ Electrical Solutions · '+S.job),W-M-4,y+7,{align:'right'}); doc.text(T(o.ref||''),W-M-4,y+12,{align:'right'}); doc.setTextColor(0); y+=19;
+  doc.setFillColor(255,243,205); doc.rect(M,y,W-2*M,8,'F'); doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(120,80,0);
+  doc.text('DRAFT generated from recorded test results – not valid until checked and signed by the certifier.',M+3,y+5.3); doc.setTextColor(0); y+=12;
+  const box=(k,v,x,w,h=11)=>{ doc.setDrawColor(170); doc.rect(x,y,w,h); doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(95); doc.text(T(k),x+1.5,y+3.2); doc.setTextColor(0); doc.setFontSize(10); const t=doc.splitTextToSize(T(v||''),w-3); doc.text(t.slice(0,Math.max(1,Math.floor((h-4)/4.2))),x+1.5,y+8); };
+  const FW=W-2*M;
+  box('Installation address',o.addr,M,FW*0.6); box('Client / owner',o.client,M+FW*0.6,FW*0.4); y+=11;
+  box('Job',(job.name||'')+' ('+S.job+')',M,FW*0.6); box('Date',fmtDate(o.date),M+FW*0.6,FW*0.4); y+=11;
+  box('Type of work',o.type,M,FW/3); box('Risk category',o.risk,M+FW/3,FW/3); box('Supply system',o.earth,M+2*FW/3,FW/3); y+=11;
+  box('Installed and tested in accordance with',o.std+' · Electricity (Safety) Regulations 2010',M,FW*0.7); box("Relies on manufacturer's instructions",o.mfr,M+FW*0.7,FW*0.3); y+=11;
+  const dl=doc.splitTextToSize(T(o.desc),FW-3); const dh=Math.max(20,dl.length*4.2+7); box('Description of prescribed electrical work',o.desc,M,FW,dh); y+=dh;
+  box('Distribution boards / panels covered',boards.map(b=>b.name).join(', '),M,FW,13); y+=17;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('Verification summary',M,y); y+=5; doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+  const sum=[`Circuits covered: ${n}    Fully tested: ${done}    With a failed test: ${fail}    Not tested or part tested: ${n-done-fail}`,
+    `Limits applied: insulation >= ${L.irMin} Mohm; continuity <= ${L.contMax} ohm; RCD <= ${L.rcd1} ms at 1x and <= ${L.rcd5} ms at 5x; Zs max = ${L.u0} V / (B ${L.mB}, C ${L.mC}, D ${L.mD} x In) unless entered.`,
+    'Tested by: '+(Object.keys(testers).join(', ')||'-'),
+    'Instruments: '+(Object.values(insts).map(t=>t.instrument+(t.serial?' s/n '+t.serial:'')+(t.calDue?' (cal due '+fmtDate(t.calDue)+')':'')).join('; ')||'-')];
+  sum.forEach(s=>{ const t=doc.splitTextToSize(T(s),FW); doc.text(t,M,y); y+=t.length*4.4+1; });
+  if(open.length){ y+=2; doc.setFont('helvetica','bold'); doc.setTextColor(198,47,47); doc.text(T(open.length+' circuit'+(open.length===1?'':'s')+' not complete – resolve or exclude before signing:'),M,y); y+=4.5; doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+    const show=open.slice(0,Math.max(0,Math.floor((232-y)/4))); show.forEach(s=>{ doc.text(T(doc.splitTextToSize(s,FW)[0]),M+2,y); y+=4; }); if(open.length>show.length){ doc.text(T('… and '+(open.length-show.length)+' more – see the schedule pages.'),M+2,y); y+=4; } doc.setTextColor(0); }
+  y=Math.max(y+4,236); doc.setFontSize(9.5); doc.setFont('helvetica','normal');
+  const decl=doc.splitTextToSize('I certify that the prescribed electrical work described in this certificate has been done lawfully and safely, has been tested as recorded in the attached schedule, and that the information in this certificate is correct.',FW); doc.text(decl,M,y); y+=decl.length*4.4+3;
+  box('Certifier name',o.name,M,FW*0.4,13); box('EWRB registration no.',o.lic,M+FW*0.4,FW*0.25,13); box('Signature',' ',M+FW*0.65,FW*0.35,13); y+=13;
+  box('Date signed',' ',M,FW*0.4,11); box('Connection: safe to connect to a power supply',' ',M+FW*0.4,FW*0.6,11);
+  // schedule pages
+  const LW=297,LH=210,LM=10; const cols=[['Cct',17],['Description',66],['Protection',27],['RCD',12],['Cable',38],['mm²',12],['Cont.',12],['IR Mohm',15],['Pol.',11],['Zs',12],['Zs max',14],['RCD 1x',13],['RCD 5x',13],['Result',15]];
+  rows.forEach(({b,cs})=>{ let yy;
+    const head=()=>{ doc.addPage('a4','landscape'); doc.setFillColor(30,58,90); doc.rect(LM,LM,LW-2*LM,12,'F'); doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text(T('TEST SCHEDULE – '+b.name+(b.desc?' · '+b.desc:'')),LM+3,LM+8);
+      doc.setFontSize(8.5); doc.setFont('helvetica','normal'); doc.text(T((o.ref||'')+' · '+S.job+' · DRAFT'),LW-LM-3,LM+8,{align:'right'}); doc.setTextColor(0); yy=LM+16;
+      doc.setFontSize(8.5); doc.text(T(['Fed from '+(b.fed||'-'),b.supply&&('Supply '+b.supply),b.location&&('Location '+b.location)].filter(Boolean).join('   ·   ')).slice(0,190),LM,yy); yy+=3;
+      doc.setFillColor(232,236,241); doc.rect(LM,yy,LW-2*LM,7,'F'); doc.setFont('helvetica','bold'); doc.setFontSize(8); let cx=LM; cols.forEach(([t,w])=>{ doc.text(T(t),cx+1.3,yy+4.8); cx+=w; }); yy+=7; doc.setFont('helvetica','normal'); };
+    head();
+    cs.forEach(({c,s,r},i)=>{ const cb=c.cable||{}; const desc=doc.splitTextToSize(T((c.desc||'')+(c.asset?' ['+c.asset+']':'')),cols[1][1]-2.5); const cabl=doc.splitTextToSize(T(cb.no||cb.type||''),cols[4][1]-2.5);
+      const h=Math.max(6,3.5*Math.max(desc.length,cabl.length)+2.4); if(yy+h>LH-LM-8) head();
+      if(i%2){ doc.setFillColor(247,248,250); doc.rect(LM,yy,LW-2*LM,h,'F'); }
+      const res=s.st==='done'?'PASS':s.st==='fail'?'FAIL':s.st==='part'?s.done+'/'+s.total:'Not tested';
+      const vals=[c.id,desc,c.prot||'',c.rcd==='N'?'-':c.rcd||'',cabl,cb.size||'',r.ct||'',r.ir||'',r.pol||'',r.zs||'',r.zmax||'',r.rcd||'',r.t5||'',res];
+      let cx=LM; doc.setFontSize(8); vals.forEach((v,j)=>{ if(j===13) doc.setTextColor(...(s.st==='done'?[30,138,76]:s.st==='fail'?[198,47,47]:[150,100,0])); doc.text(Array.isArray(v)?v:T(v),cx+1.3,yy+4.1); doc.setTextColor(0); cx+=cols[j][1]; });
+      doc.setDrawColor(210); doc.line(LM,yy+h,LW-LM,yy+h); yy+=h; }); });
+  const pages=doc.getNumberOfPages(); doc.setFontSize(7.5); doc.setTextColor(100);
+  for(let p=1;p<=pages;p++){ doc.setPage(p); const ls=p>1; doc.text(T('Draft from the NZES Test Recorder, '+fmtDate(new Date().toISOString())+'. Latest saved result per test. Page '+p+' of '+pages),ls?LM:M,(ls?LH:297)-6); }
+  download(`${S.job}_CoC_draft_${boards.map(b=>b.name).join('_').slice(0,40)}.pdf`,doc.output('blob'));
+}
+
 const YNN = ['Y','N','N/A'];
 const UNIT = {ir:' MΩ',ohm:' Ω',z:' Ω',ms:' ms',amp:' A'};
 const CHECKS_CABLE = ['Cable tied','Cable labelled','Correct cable type / size','Core / ferrule numbers fitted','Correct gland','Lugged correctly','Segregation','Spare cores earthed','Correct colour code','Terminated as per drawings'];
@@ -375,15 +519,16 @@ function fieldsFor(a,sec){
     ...(is3ph(c)?[{id:'seq',label:'Phase sequence correct (L1-L2-L3)',type:'ynna'}]:[])];
   if(k.endsWith('.zs')) return [
     {id:'dev',label:'Protective device',type:'text',pre:a.prot},
-    {id:'curve',label:'Curve / type',type:'seg',opts:['B','C','D','MCCB','Fuse']},
+    {id:'In',label:'Rating In (A)',type:'num',pre:parseProt(a.prot).In},
+    {id:'curve',label:'Curve / type',type:'seg',opts:['B','C','D','MCCB','Fuse'],pre:parseProt(a.prot).curve},
     {id:'zs',label:'Zs measured',type:'z'},
-    {id:'zmax',label:'Zs max (App. G)',type:'z'},
+    {id:'zmax',label:'Zs max – leave blank to calculate',type:'z'},
     {id:'pfc',label:'PFC / PSCC (kA)',type:'num'}];
   if(k==='rcd') return [
     {id:'ma',label:'Rated IΔn',type:'seg',opts:['10mA','30mA','100mA','300mA'],pre:'30mA'},
     {id:'rtype',label:'RCD type',type:'seg',opts:['AC','A','F','B']},
-    {id:'t1',label:'Trip time at 1× IΔn',type:'ms',max:300},
-    {id:'t5',label:'Trip time at 5× IΔn',type:'ms',max:40},
+    {id:'t1',label:'Trip time at 1× IΔn',type:'ms',max:LIM().rcd1},
+    {id:'t5',label:'Trip time at 5× IΔn',type:'ms',max:LIM().rcd5},
     {id:'half',label:'Does NOT trip at ½ × IΔn',type:'ynna'},
     {id:'btn',label:'Test button operates',type:'ynna'}];
   if(k==='fn'){
@@ -418,9 +563,9 @@ function judge(a,sec,vals,na){
     if(x.type==='amp'){ const n=parseNum(v), fl=parseNum(a.flc); if(isFinite(n)&&isFinite(fl)&&fl>0&&n>fl) warn.push(x.label+' '+v+' A above FLC '+a.flc+' A'); }
   }
   if(sec.key.endsWith('.zs')){
-    const z=parseNum(vals.zs), zm=parseNum(vals.zmax);
-    if(isFinite(z)&&isFinite(zm)&&z>zm) fail.push('Zs '+vals.zs+' Ω > max '+vals.zmax+' Ω');
-    else if(isFinite(z)&&!isFinite(zm)) warn.push('Enter Zs max to confirm disconnection time');
+    const z=parseNum(vals.zs), zx=zsMaxFor(vals);
+    if(isFinite(z)&&zx&&z>zx.z) fail.push('Zs '+vals.zs+' Ω > max '+zx.z+' Ω'+(zx.src==='calc'?' (calculated '+zx.txt+')':''));
+    else if(isFinite(z)&&!zx) warn.push('Enter Zs max to confirm disconnection time');
   }
   if(sec.key==='wr'){
     const ph=['R-Y','R-B','Y-B'].map(i=>parseNum(vals[i])).filter(n=>isFinite(n)&&n>0);
@@ -569,7 +714,7 @@ function viewHome(){
   <div class="actions">
     <button class="btn primary" type="button" data-act="pdfList" ${list.length?'':'disabled'}>Test sheets PDF (${list.length})</button>
     <button class="btn" type="button" data-act="csv">Export results CSV</button>
-    ${S.canEdit?'<button class="btn" type="button" data-act="addDev">+ Add device</button><button class="btn" type="button" data-act="import">Import CSV</button>':''}
+    ${S.canEdit?'<button class="btn" type="button" data-act="limits">Test limits</button><button class="btn" type="button" data-act="addDev">+ Add device</button><button class="btn" type="button" data-act="import">Import CSV</button>':''}
   </div>
   <div class="list">${list.map(rowHtml).join('')||'<div class="card hint">No assets match.</div>'}</div>`;
 }
@@ -656,8 +801,8 @@ function viewForm(a,key){
       <span class="hint" id="npmsg" style="align-self:center"></span></div>${S.canImg||S.assetsCap?camHint():''}<div class="photos" id="npphoto">${prev&&prev.photo?photoStrip([prev.photo],false):''}</div>`:''}
     ${hasIR?`<div class="actions"><button class="btn" type="button" data-act="fillIR">Set all IR to &gt;${esc(irMax())} MΩ</button><span class="hint" style="align-self:center">Pass ≥ ${IR_PASS} MΩ</span></div>`:''}
     ${key.endsWith('.ct')?`<div class="actions"><button class="btn primary" type="button" data-act="fillCont">✓ Tick continuity OK – all cores</button><span class="hint" style="align-self:center">Or enter readings. Pass ≤ ${CONT_PASS} Ω</span></div>`:fields.some(f=>f.type==='ohm')&&key!=='wr'?`<div class="hint">Pass ≤ ${CONT_PASS} Ω</div>`:''}
-    ${key.endsWith('.zs')?'<div class="hint">Test live at the furthest point of the circuit. Take Zs max from AS/NZS 3000 Appendix G or the device maker for the required disconnection time.</div>':''}
-    ${key==='rcd'?'<div class="hint">Pass: 1× IΔn ≤ 300 ms, 5× IΔn ≤ 40 ms, no trip at ½ IΔn.</div>':''}
+    ${key.endsWith('.zs')?'<div class="hint">Test live at the furthest point of the circuit.</div><div class="hint" id="zsHint" style="font-weight:600"></div>':''}
+    ${key==='rcd'?`<div class="hint">Pass: 1× IΔn ≤ ${LIM().rcd1} ms, 5× IΔn ≤ ${LIM().rcd5} ms, no trip at ½ IΔn.</div>`:''}
     ${key==='fn'&&F.a.flc?'<div class="hint">FLC '+esc(F.a.flc)+' A – running current above this is flagged.</div>':''}
     ${hasCk?`<div class="checks">${fields.filter(f=>f.type==='ynna').map(fieldHtml).join('')}</div>
       ${fields.filter(f=>f.type==='ynna').length>3?'<div class="actions"><button class="btn" type="button" data-act="allY">Mark all Yes</button></div>':''}`:''}
@@ -688,7 +833,7 @@ function fieldHtml(f){
 }
 function wireForm(){
   const form=$('#tform'); if(!form) return;
-  form.addEventListener('input',e=>{ const f=e.target.dataset&&e.target.dataset.f; if(f){F.vals[f]=e.target.value; markInput(e.target); if(f==='zmax'){const zi=form.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);}} if(e.target.id==='naChk'){F.na=e.target.checked;} updateResult(); });
+  form.addEventListener('input',e=>{ const f=e.target.dataset&&e.target.dataset.f; if(f){F.vals[f]=e.target.value; markInput(e.target); if(f==='zmax'||f==='In'){const zi=form.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);}} if(e.target.id==='naChk'){F.na=e.target.checked;} updateResult(); });
   form.addEventListener('change',e=>{ if(e.target.id==='naChk'){F.na=e.target.checked; updateResult();} });
   form.addEventListener('submit',e=>{ e.preventDefault(); saveTest(); });
   form.querySelectorAll('input[data-f]').forEach(markInput); updateResult();
@@ -713,11 +858,12 @@ function markInput(el){
   if(t==='ir') el.classList.add(n<IR_PASS?'bad':'good');
   if(t==='ohm' && F.sec.key!=='wr') el.classList.add(n>CONT_PASS?'bad':'good');
   if(t==='ms'){ const f=F.fields.find(x=>x.id===el.dataset.f); if(f&&f.max) el.classList.add(n>f.max?'bad':'good'); }
-  if(t==='z' && el.dataset.f==='zs'){ const zm=parseNum(F.vals.zmax); if(isFinite(zm)) el.classList.add(n>zm?'bad':'good'); }
+  if(t==='z' && el.dataset.f==='zs'){ const zx=zsMaxFor(F.vals); if(zx) el.classList.add(n>zx.z?'bad':'good'); }
 }
 function updateResult(){
   const j=judge(F.a,F.sec,F.vals,F.na); const el=$('#resultLine'); if(!el) return;
   const map={pass:['PASS','var(--pass)'],fail:['FAIL','var(--fail)'],warn:['CHECK','var(--warn)'],na:['NOT APPLICABLE','var(--muted)'],rec:['Recorded','var(--pass)'],'':['','var(--muted)']};
+  limitHint();
   const [t,c]=map[j.result]; el.style.color=c; el.textContent=t+(j.why?' — '+j.why:'');
 }
 async function saveTest(){
@@ -727,10 +873,11 @@ async function saveTest(){
   const j=judge(F.a,F.sec,F.vals,F.na);
   if(!j.result){ toast('Nothing entered yet'); return; }
   const vals={}; Object.entries(F.vals).forEach(([k,v])=>{ if(v!==''&&v!=null) vals[k]=String(v); });
+  if(F.sec.key.endsWith('.zs')&&!vals.zmax){ const zx=zsMaxFor(F.vals); if(zx){ vals.zmax=String(zx.z); vals.zmaxSrc='calculated '+zx.txt; } }
   const rec={job:S.job,asset:F.a.tag,board:F.a.board||'',section:F.sec.key,cable:F.sec.cable!=null?((F.a.cables||[])[F.sec.cable]||{}).no||'':'',
     values:vals,result:j.result,why:j.why,testerName:tester,licence:S.profile.licence||'',
     instrument:$('#f_inst')?$('#f_inst').value.trim():'',serial:$('#f_ser')?$('#f_ser').value.trim():'',calDue:S.profile.calDue||'',
-    testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),isolated:iso?iso.checked:null};
+    limits:LIM(),testDate:$('#f_date').value||today(),at:new Date().toISOString(),photo:F.photo||(F.prevPhoto||''),by:S.uid||'',notes:$('#f_notes').value.trim(),isolated:iso?iso.checked:null};
   btn.disabled=true; btn.textContent='Saving…';
   try{
     await S.db.collection('tests').add(rec);
@@ -770,7 +917,7 @@ function onClick(e){
   else if(act==='sec'){S.section=v;S.view='form';render();window.scrollTo(0,0);}
   else if(act==='group'){S.group=v;render();}
   else if(act==='status'){S.status=v;render();}
-  else if(act==='seg'){ const f=b.dataset.f; F.vals[f]= F.vals[f]===v?'':v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===F.vals[f])); updateResult(); }
+  else if(act==='seg'){ const f=b.dataset.f; F.vals[f]= F.vals[f]===v?'':v; b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v===F.vals[f])); {const zi=document.querySelector('input[data-f="zs"]'); if(zi) markInput(zi);} updateResult(); }
   else if(act==='fillIR'){ const v='>'+irMax(); document.querySelectorAll('input[data-t="ir"]').forEach(i=>{i.value=v;F.vals[i.dataset.f]=v;markInput(i);}); updateResult(); }
   else if(act==='fillCont'){ document.querySelectorAll('input[data-t="ohm"]').forEach(i=>{i.value='OK';F.vals[i.dataset.f]='OK';markInput(i);}); updateResult(); }
   else if(act==='allY'){ F.fields.filter(f=>f.type==='ynna').forEach(f=>F.vals[f.id]='Y'); document.querySelectorAll('.checks .seg button').forEach(x=>x.setAttribute('aria-pressed',x.dataset.v==='Y')); updateResult(); }
@@ -781,6 +928,8 @@ function onClick(e){
   else if(act==='addDev') openDevice(null);
   else if(act==='editDev') openDevice(S.asset);
   else if(act==='profile') openProfile();
+  else if(act==='limits') openLimits();
+  else if(act==='coc') openCoc(v||null);
   else if(act==='void') voidTest(v,b);
   else if(act==='close') closeModal();
   else if(act==='copyLink'){ try{ navigator.clipboard.writeText(APP_URL).then(()=>toast('Link copied – paste it into Chrome'),()=>toast(APP_URL)); }catch(_){ toast(APP_URL); } }
@@ -1161,7 +1310,7 @@ function tabBar(){
 function viewBoards(){
   if(S.loaded && S.loaded.b===false) return `<div class="card"><h2>Loading schedules…</h2></div>`;
   const bs=Object.values(S.boards).sort((x,y)=>(x.order??999)-(y.order??999)||x.name.localeCompare(y.name));
-  return `<div class="actions">${S.canEdit?'<button class="btn" type="button" data-act="newBoard">+ Add board</button>':''}</div>
+  return `<div class="actions"><button class="btn primary" type="button" data-act="coc">CoC draft</button>${S.canEdit?'<button class="btn" type="button" data-act="newBoard">+ Add board</button>':''}</div>
   <div class="list">${bs.map(b=>{ const r=boardSummary(b); const st=r.fail?'fail':r.n&&r.done===r.n?'done':(r.done||r.part)?'part':'none';
     return `<button class="row s-${st}" type="button" data-act="board" data-v="${esc(b.name)}"><span class="stripe"></span>
       <span><span class="t1"><span class="tag">${esc(b.name)}</span><span class="d">${esc(b.supply||'')}</span></span>
@@ -1173,7 +1322,7 @@ function viewBoards(){
 function viewBoard(b){
   const r=boardSummary(b);
   return `<div class="actions"><button class="btn" type="button" data-act="boards">← All boards</button>
-    <button class="btn primary" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button>${dwgForPanel(b.name).length?`<button class="btn" type="button" data-act="dwgPanel" data-v="${esc(b.name)}">Drawings</button>`:''}
+    <button class="btn primary" type="button" data-act="pdfBoard" data-v="${esc(b.name)}">Print schedule card</button><button class="btn" type="button" data-act="coc" data-v="${esc(b.name)}">CoC draft</button>${dwgForPanel(b.name).length?`<button class="btn" type="button" data-act="dwgPanel" data-v="${esc(b.name)}">Drawings</button>`:''}
     ${S.canEdit?`<button class="btn" type="button" data-act="editBoard" data-v="${esc(b.name)}">Edit schedule</button>`:''}</div>
   <div class="card"><div class="sechead"><h2><span class="tag">${esc(b.name)}</span></h2><span class="prog">${r.done}/${r.n} tested${r.fail?' · '+r.fail+' fail':''}</span></div>
     <div style="font-size:1.1rem;margin-top:4px">${esc(b.desc||'')}</div>
