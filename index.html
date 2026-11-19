@@ -1536,10 +1536,10 @@ async function loadSignatures(){
   try{ const r=await withTimeout(sb.from('profiles').select('id,data'),8000); (r.data||[]).forEach(x=>add(x.id,x.data)); }catch(e){}
   return m;
 }
-// A signature only goes on a page when every test on it was done by the same registered person who saved that signature
+// Sign with the first registered tester on the page who has saved a signature (the Name box lists everyone who tested)
 function pageSig(sigs,rs){ rs=(rs||[]).filter(Boolean); if(!sigs||!rs.length) return '';
-  const lic=rs.map(r=>String(r.licence||'').trim().toUpperCase()); if(lic.some(l=>!l)||new Set(lic).size>1) return '';
-  return sigs['l:'+lic[0]]||''; }
+  for(const r of rs){ const l=String(r.licence||'').trim().toUpperCase(); if(l&&sigs['l:'+l]) return sigs['l:'+l]; }
+  return ''; }
 function testerNames(rs){ return [...new Set((rs||[]).filter(Boolean).map(r=>String(r.testerName||'').trim()).filter(Boolean))].join(' / '); }
 function pdfSig(doc,img,x,yBase,maxW,maxH){ if(!img) return; try{ const p=doc.getImageProperties(img); const r=Math.min(maxW/p.width,maxH/p.height); const w=p.width*r,h=p.height*r; doc.addImage(img,'PNG',x,yBase-h+0.8,w,h); }catch(e){} }
 function openProfile(){
