@@ -2093,7 +2093,7 @@ function makePdfSite(assets,opt){ opt=opt||{};
     font(15,true); txt('Cable:',100,40); ul(118,205,41); ul(118,205,47.5);
     val(c.no||'(no cable no.)',119,40,85,{sz:12}); val(a.tag+(a.desc?'  '+a.desc:''),119,46.5,85,{sz:10});
     font(9,true); txt('Cable Type:',100,57); ul(119,205,58); val(c.type||'',120,57,84,{sz:11});
-    font(9,true); txt('No of Connections:',100,64); ul(130,205,65); val(cores.length&&!/earth|screen/i.test(cores.join())?cores.length+'G':'',131,64,30,{sz:11});
+    font(9,true); txt('No of Connections:',100,64); ul(130,205,65); val(cores.length&&!/earth|screen/i.test(cores.join())?String(cores.length):'',131,64,30,{sz:11});
     font(9,true); txt('Size:',100,71); ul(109,205,72); val(c.size?c.size+'mm²'+(c.len?'   ('+c.len+' m)':''):'',110,71,90,{sz:11});
     font(9,true); txt('Tests:',100,90); txt('Cross Out the Tests Not Used',130,90);
     const tv=V(ir,'tv'); if(tv){ font(8); ink(); txt('Test voltage '+tv,196,90); blk(); }
