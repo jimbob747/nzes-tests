@@ -1929,7 +1929,7 @@ function makePdfNes(assets,opt){ opt=opt||{};
     ['R-Y','Y-B','R-B','P-N','P-E'].forEach((h,k)=>txt(h,(ix[k]+ix[k+1])/2,ry+3.4,{align:'center'}));
     doc.line(L,ry+4.6,ix[5],ry+4.6);
     // continuity rows
-    const extras=[]; const notesTxt=[...extraNotes];
+    const extras=[]; const notesTxt=[];
     const cores=coresFor(c.type).cont;
     const src=V(ct,'src')||a.fed||'', dst=V(ct,'dst')||a.tag;
     const crow=[]; if(NA(ct)) crow.push(['N/A','','','N/A','']);
@@ -1944,7 +1944,6 @@ function makePdfNes(assets,opt){ opt=opt||{};
     if(zs&&!NA(zs)){ const dead=zsDead(zs.values||{}); const zx=zsMaxFor(zs.values||{});
       extras.push('Earth fault-loop: '+[V(zs,'dev')&&('device '+V(zs,'dev')),dead?(V(zs,'rph')&&('R(a+e) '+V(zs,'rph')+' ohm (dead test)')):(V(zs,'zs')&&('Zs '+V(zs,'zs')+' ohm')),zx&&('max '+zx.z+' ohm'),V(zs,'pfc')&&('PFC '+V(zs,'pfc')+' kA')].filter(Boolean).join(', ')); }
     if(rcd&&!NA(rcd)) extras.push('RCD '+[V(rcd,'ma'),V(rcd,'rtype')&&('type '+V(rcd,'rtype'))].filter(Boolean).join(' ')+': '+[V(rcd,'t1')&&('1x '+V(rcd,'t1')+' ms'),V(rcd,'t5')&&('5x '+V(rcd,'t5')+' ms'),V(rcd,'half')&&('no trip at 1/2x '+(V(rcd,'half')==='Y'?'OK':V(rcd,'half'))),V(rcd,'btn')&&('test button '+(V(rcd,'btn')==='Y'?'OK':V(rcd,'btn')))].filter(Boolean).join(', '));
-    [['Continuity',ct],['Insulation',ir],['Polarity',pol],['Fault loop',zs],['Installation checks',ck],['RCD',rcd],['Functional test',fn]].forEach(([l,r])=>{ const s=noteOf(l,r); if(s) notesTxt.push(s); });
     const showBox=extras.length||notesTxt.length;
     const rowH=4.7, nRows=showBox?20:33, tTop=ry+4.6, tBot=tTop+nRows*rowH;
     doc.setLineWidth(0.25);
@@ -1969,7 +1968,7 @@ function makePdfNes(assets,opt){ opt=opt||{};
     if(showBox){ const lines=[]; font(8);
       extras.forEach(e=>lines.push(...doc.splitTextToSize(T(e),cx[5]-L-4)));
       notesTxt.forEach(e=>lines.push(...doc.splitTextToSize(T(e),cx[5]-L-4)));
-      const h=Math.max(20,262-by-3); doc.setLineWidth(0.25); doc.rect(L,by+1.5,cx[5]-L,h-1.5); font(8,true); txt('Additional results / notes',L+1.5,by+5);
+      const h=Math.max(20,262-by-3); doc.setLineWidth(0.25); doc.rect(L,by+1.5,cx[5]-L,h-1.5); font(8,true); txt('Additional results',L+1.5,by+5);
       font(7.5); doc.setTextColor(0,0,140); const max=Math.floor((h-6)/3.3); lines.slice(0,max).forEach((l,k)=>doc.text(l,L+1.5,by+8.8+k*3.3)); if(lines.length>max){ doc.text('... (continued in app record)',L+1.5,by+8.8+max*3.3); } doc.setTextColor(0);
       by+=h; }
     // accountability
@@ -2102,17 +2101,15 @@ function makePdfSite(assets,opt){ opt=opt||{};
     const ckv=k=>NA(ck)?'N/A':V(ck,k);
     const conn=NA(ck)?'N/A':(V(ck,'k5')==='N'||V(ck,'k9')==='N')?'N':(V(ck,'k5')||V(ck,'k9'));
     yesNo('Cable Tied',ckv('k0'),100,155); yesNo('Connections Visually Checked',conn,100,162); yesNo('Cable Labeled',ckv('k1'),100,169); yesNo('Correct Colour Code',ckv('k8'),100,176);
-    // everything the site sheet has no box for
-    const ex=[...(pre||[])];
-    if(ck&&!NA(ck)){ const o=[['Correct cable type / size','k2'],['Core / ferrule numbers fitted','k3'],['Correct gland','k4'],['Lugged correctly','k5'],['Segregation','k6'],['Spare cores earthed','k7'],['Terminated as per drawings','k9']].filter(([,k])=>V(ck,k)).map(([l,k])=>l+' '+yn(V(ck,k)));
-      if(o.length) ex.push('Installation checks: '+o.join(', ')); }
-    if(ir&&!nai&&V(ir,'N-E')) ex.push('Insulation N-E: '+V(ir,'N-E')+' Mohm');
-    if(pol) ex.push(NA(pol)?'Polarity: N/A':'Polarity '+(V(pol,'pol')==='Y'?'correct':yn(V(pol,'pol')))+(V(pol,'seq')?', phase sequence '+(V(pol,'seq')==='Y'?'correct':yn(V(pol,'seq'))):''));
-    if(zs&&!NA(zs)){ const dead=zsDead(zs.values||{}), zx=zsMaxFor(zs.values||{}); ex.push('Earth fault-loop: '+[V(zs,'dev')&&('device '+V(zs,'dev')),dead?(V(zs,'rph')&&('R(a+e) '+V(zs,'rph')+' ohm (dead)')):(V(zs,'zs')&&('Zs '+V(zs,'zs')+' ohm')),zx&&('max '+zx.z+' ohm'),V(zs,'pfc')&&('PFC '+V(zs,'pfc')+' kA')].filter(Boolean).join(', ')); }
-    if(rcd&&!NA(rcd)) ex.push('RCD '+[V(rcd,'ma'),V(rcd,'rtype')&&('type '+V(rcd,'rtype'))].filter(Boolean).join(' ')+': '+[V(rcd,'t1')&&('1x '+V(rcd,'t1')+' ms'),V(rcd,'t5')&&('5x '+V(rcd,'t5')+' ms'),V(rcd,'half')&&('no trip at 1/2x '+yn(V(rcd,'half'))),V(rcd,'btn')&&('test button '+yn(V(rcd,'btn')))].filter(Boolean).join(', '));
-    if(fn) ex.push(NA(fn)?'Functional test: N/A':'Functional test: operates '+yn(V(fn,'runs'))+', isolator/stop '+yn(V(fn,'iso'))+', E-stop/interlocks '+yn(V(fn,'estop'))+', indication '+yn(V(fn,'ind')));
-    [['Continuity',ct],['Insulation',ir],['Polarity',pol],['Fault loop',zs],['Installation checks',ck],['RCD',rcd],['Functional test',fn]].forEach(([l,r])=>{ const s=noteOf(l,r); if(s) ex.push(s); });
-    notesBox(ex.filter(Boolean),222,36,60,134);
+    // tests the site sheet has no box for, shown as the same Yes/No lines
+    if(pol){ yesNo('Polarity Correct',NA(pol)?'N/A':V(pol,'pol'),180,155); if(fieldsFor(a,secs.find(s=>s.key==='c'+i+'.pol')||{key:''}).some(f=>f.id==='seq')) yesNo('Phase Sequence Correct',NA(pol)?'N/A':V(pol,'seq'),180,162); }
+    if(fn){ const fv=NA(fn)?'N/A':(['runs','iso','estop','ind'].map(k=>V(fn,k)).includes('N')?'N':V(fn,'runs')); yesNo('Functional Test',fv,180,169); }
+    let ty2=93;
+    if(ir&&!nai&&V(ir,'N-E')){ ty2=table(222,ty2,'Meg-Ohms',['N-Earth'],[V(ir,'N-E')],15.5)+6; }
+    if(zs&&!NA(zs)){ const dead=zsDead(zs.values||{}), zx=zsMaxFor(zs.values||{});
+      ty2=table(222,ty2,'Earth Fault Loop - Ohms',[dead?'R(a+e)':'Zs','Max','PFC kA'],[dead?V(zs,'rph'):V(zs,'zs'),zx?String(zx.z):'',V(zs,'pfc')],20)+6; }
+    if(rcd&&!NA(rcd)){ ty2=table(222,ty2,'RCD '+(V(rcd,'ma')||'')+' - Trip ms',['1 x','5 x'],[V(rcd,'t1'),V(rcd,'t5')],30)+4;
+      yesNo('No Trip at 1/2 x',V(rcd,'half'),222,ty2+4); yesNo('Test Button',V(rcd,'btn'),222,ty2+11); }
   }
 
   function motorPage(a){
@@ -2152,7 +2149,6 @@ function makePdfSite(assets,opt){ opt=opt||{};
     font(9,true); txt('Running Amps:',160,150); ul(184,205,151); val(ia.some(Boolean)?ia.map(v=>v||'-').join(' / '):'',185,150,19,{sz:9});
     txt('O/L / Drive Limit:',160,157.5); ul(189,205,158.5); val(V(fn,'ol'),190,157.5,14,{sz:9});
     const ex=[]; [['Nameplate',np],['Motor insulation',mir],['Winding resistance',wr],['Rotation',rot],['Starter inspection',st],['Functional test',fn]].forEach(([l,r])=>{ const s=noteOf(l,r); if(s) ex.push(s); });
-    notesBox(ex,222,36,60,134);
   }
 
   assets.forEach(a=>{ const secs=sectionsFor(a); if(isMotor(a)) motorPage(a); (a.cables&&a.cables.length?a.cables:[{}]).forEach((c,i)=>cablePage(a,secs,c,i)); });
