@@ -1536,7 +1536,11 @@ async function loadSignatures(){
   try{ const r=await withTimeout(sb.from('profiles').select('id,data'),8000); (r.data||[]).forEach(x=>add(x.id,x.data)); }catch(e){}
   return m;
 }
-function sigFor(sigs,rec){ if(!rec||!sigs) return ''; return sigs['l:'+String(rec.licence||'').trim().toUpperCase()]||sigs['u:'+rec.by]||''; }
+// A signature only goes on a page when every test on it was done by the same registered person who saved that signature
+function pageSig(sigs,rs){ rs=(rs||[]).filter(Boolean); if(!sigs||!rs.length) return '';
+  const lic=rs.map(r=>String(r.licence||'').trim().toUpperCase()); if(lic.some(l=>!l)||new Set(lic).size>1) return '';
+  return sigs['l:'+lic[0]]||''; }
+function testerNames(rs){ return [...new Set((rs||[]).filter(Boolean).map(r=>String(r.testerName||'').trim()).filter(Boolean))].join(' / '); }
 function pdfSig(doc,img,x,yBase,maxW,maxH){ if(!img) return; try{ const p=doc.getImageProperties(img); const r=Math.min(maxW/p.width,maxH/p.height); const w=p.width*r,h=p.height*r; doc.addImage(img,'PNG',x,yBase-h+0.8,w,h); }catch(e){} }
 function openProfile(){
   const P=S.profile;
@@ -1902,7 +1906,7 @@ function makePdfNes(assets,opt){ opt=opt||{};
     // accountability
     const tester=firstRec([fn,st,rot,wr,mir,np]);
     font(9.5); txt('Accountability  - I certify that the electrical work relating to this check sheet has been tested to current',16,y+77); txt(' NZ wiring regulations and codes of practice requirements.',16,y+81.5); txt('(Please Print)',16,y+86);
-    field('Name:',16,y+90.5,30,77,tester&&tester.testerName); field('Signed:',85,y+90.5,98,150,''); pdfSig(doc,sigFor(opt.sigs,tester),100,y+91.3,48,10); field('Date:',163,y+90.5,171,188,tester&&tester.testDate?fmtDate(lastDate([np,mir,wr,rot,st,fn])):'');
+    field('Name:',16,y+90.5,30,77,testerNames([np,mir,wr,rot,st,fn])); field('Signed:',85,y+90.5,98,150,''); pdfSig(doc,pageSig(opt.sigs,[np,mir,wr,rot,st,fn]),100,y+91.3,48,10); field('Date:',163,y+90.5,171,188,tester&&tester.testDate?fmtDate(lastDate([np,mir,wr,rot,st,fn])):'');
     field('Registration Type:',16,y+99.5,43,77,S.profile.regType||''); field('Practising Licence/Registration No.:',100,y+99.5,150,188,tester&&tester.licence);
     field('Accepted By:',16,y+108.5,36,77,''); field('Signed:',85,y+108.5,98,150,''); field('Date:',163,y+108.5,171,188,''); font(8); txt('Client/Engineer',47,y+112.5,{align:'center'});
     doc.setLineWidth(0.6); doc.rect(L,top,R-L,y+115-top);
@@ -1980,8 +1984,8 @@ function makePdfNes(assets,opt){ opt=opt||{};
     // accountability
     const tester=firstRec([ct,ir,pol,ck,zs,rcd,fn]); const y=Math.max(by,262)+3;
     font(9.5); txt('Accountability  - I certify that the electrical work relating to this test sheet has been tested to',L+1,y); txt('current  New Zealand  wiring regulations and codes of practice requirements',L+1,y+4.3);
-    txt('Name:',L+1,y+8.8); uline(34,95,y+9.8); val(tester&&tester.testerName,35,y+8.8,59,{center:true});
-    txt('Signed:',97,y+8.8); uline(118,166,y+9.8); pdfSig(doc,sigFor(opt.sigs,tester),120,y+9.6,44,9); txt('Date:',167,y+8.8); uline(178,197,y+9.8); val(fmtDate(lastDate([ct,ir,pol,ck,zs,rcd,fn])),178.5,y+8.8,18,{center:true});
+    txt('Name:',L+1,y+8.8); uline(34,95,y+9.8); val(testerNames([ct,ir,pol,ck,zs,rcd,fn]),35,y+8.8,59,{center:true});
+    txt('Signed:',97,y+8.8); uline(118,166,y+9.8); pdfSig(doc,pageSig(opt.sigs,[ct,ir,pol,ck,zs,rcd,fn]),120,y+9.6,44,9); txt('Date:',167,y+8.8); uline(178,197,y+9.8); val(fmtDate(lastDate([ct,ir,pol,ck,zs,rcd,fn])),178.5,y+8.8,18,{center:true});
     txt('Practicing Licence/Registration No.',L+1,y+13.1); uline(76,118,y+14.1); val(tester&&tester.licence,77,y+13.1,40,{center:true});
     txt('Accepted By:',L+1,y+17.6); uline(34,95,y+18.6); txt('Signed:',97,y+17.6); uline(118,166,y+18.6); txt('Date:',167,y+17.6); uline(178,197,y+18.6); font(8); txt('Client/Engineer',64,y+21.6,{align:'center'});
     doc.setLineWidth(0.7); doc.rect(L,top,R-L,y+23-top);
@@ -2056,8 +2060,8 @@ function makePdfSite(assets,opt){ opt=opt||{};
     font(9.5);
   }
   function who(rs){ const t=firstRec(rs); font(9,true); blk();
-    txt('Name:',92,24); ul(102,138,25); if(t) val(t.testerName,103,24,34,{sz:11});
-    font(9,true); txt('Signed:',142,24); ul(154,190,25); pdfSig(doc,sigFor(opt.sigs,t),156,25,32,11);
+    txt('Name:',92,24); ul(102,138,25); if(t) val(testerNames(rs),103,24,34,{sz:11});
+    font(9,true); txt('Signed:',142,24); ul(154,190,25); pdfSig(doc,pageSig(opt.sigs,rs),156,25,32,11);
     font(9,true); txt('Date:',194,24); ul(203,232,25); val(fmtDate(lastDate(rs)),204,24,27,{sz:11});
     const ins=rs.filter(r=>r&&r.instrument).pop(); if(ins){ font(7); blk(); txt('Instrument:',92,31); ink(); txt(T(ins.instrument+(ins.serial?'   S/N '+ins.serial:'')+(ins.calDue?'   Cal due '+fmtDate(ins.calDue):'')),107,31); blk(); } }
   function yesNo(label,v,x,y){ font(9.5,true); blk(); txt(label+':',x,y); const w=doc.getTextWidth(T(label+': ')); const xy=x+w+1;
