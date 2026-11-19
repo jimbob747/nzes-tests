@@ -302,14 +302,20 @@ function makeDb(){
     let alive=true, served=false, live=false; const ck='c:'+table+':'+(filter?filter[1]:'all');
     const fromCache=async()=>{ const rows=await KV.get(ck); if(!alive||live||served||!rows) return !!rows&&served; served=true; const sn=asSnap(rows); sn.metadata.fromCache=true; next(sn); return true; };
     fromCache();
-    const load=async()=>{ let q=sb.from(table).select('id,data').order('created_at',{ascending:true}).limit(10000);
-      if(filter) q=q.eq(filter[0],filter[1]);
+    // The API returns at most 1000 rows per request, so read in pages until a short page comes back
+    const fetchAll=async()=>{ const PG=1000; let all=[];
+      for(let from=0;from<100000;from+=PG){ let q=sb.from(table).select('id,data').order('created_at',{ascending:true}).order('id',{ascending:true}).range(from,from+PG-1);
+        if(filter) q=q.eq(filter[0],filter[1]);
+        const r=await withTimeout(q,20000); if(r.error) return r; const d=r.data||[]; all=all.concat(d); if(d.length<PG) break; }
+      return {data:all,error:null}; };
+    const q={then:(res,rej)=>fetchAll().then(res,rej)};
+    const load=async()=>{
       let r;
       if(navigator.onLine===false) r={error:{message:'offline',code:''}};
       else { if(S.noSession){ const g=await withTimeout(sb.auth.getSession(),8000); if(g.data&&g.data.session) S.noSession=false; }
         if(!S.noSession&&(await freshToken())==='lost'){ authLost(); return; }
-        r=S.noSession?{error:{message:'no session',code:''}}:await withTimeout(q,15000);
-        if(r.error&&isJwtErr(r.error)){ const ok=await freshToken(true); if(ok===true) r=await withTimeout(q,15000); else { authLost(); return; } } }
+        r=S.noSession?{error:{message:'no session',code:''}}:await withTimeout(q,60000);
+        if(r.error&&isJwtErr(r.error)){ const ok=await freshToken(true); if(ok===true) r=await withTimeout(q,60000); else { authLost(); return; } } }
       if(r.error&&served&&/jwt|401/i.test((r.error.message||'')+(r.error.code||''))) r={error:{message:'auth',code:''}};
       const data=r.data, e=r.error; if(!alive) return;
       if(e){ if(errOf(e).code==='unavailable'){ const had=served||await fromCache(); if(had||served){ setOffline(true); return; } } error&&error(errOf(e)); return; }
