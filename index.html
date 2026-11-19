@@ -2140,7 +2140,6 @@ function makePdfSite(assets,opt){ opt=opt||{};
     const tv=V(mir,'tv');
     table(100,87,'Motor Insulation - Meg-Ohms'+(tv?' @ '+tv:''),['R-E','Y-E','B-E','R-Y','R-B','Y-B'],[mv('R-E'),mv('Y-E'),mv('B-E'),mv('R-Y'),mv('R-B'),mv('Y-B')],15.5,[1,1,1,1,1,1]);
     // rotation
-    const dir=NA(rot)?'N/A':V(rot,'dir'); font(9,true); txt('Rotation (non-drive end):',22,118); ul(64,96,119); val(dir,65,118,30,{sz:10.5});
     const rv=k=>NA(rot)?'N/A':V(rot,k);
     yesNo('Correct Rotation',rv('correct'),22,126); yesNo('Connections Checked',rv('conn'),22,133.5); yesNo('Earth Connected',rv('earth'),22,141);
     // starter
@@ -2155,9 +2154,7 @@ function makePdfSite(assets,opt){ opt=opt||{};
     const fv=k=>NA(fn)?'N/A':V(fn,k);
     yesNo('Runs Correctly',fv('runs'),22,160); yesNo('Isolator / Stop',fv('iso'),22,167.5); yesNo('E-Stop / Interlocks',fv('estop'),22,175);
     yesNo('Run / Fault Indication',fv('ind'),160,172.5);
-    const ia=['Ia','Ib','Ic'].map(k=>V(fn,k));
-    font(9,true); txt('Running Amps:',160,150); ul(184,205,151); val(ia.some(Boolean)?ia.map(v=>v||'-').join(' / '):'',185,150,19,{sz:9});
-    txt('O/L / Drive Limit:',160,157.5); ul(189,205,158.5); val(V(fn,'ol'),190,157.5,14,{sz:9});
+    font(9,true); txt('O/L / Drive Limit:',160,150); ul(189,205,151); val(V(fn,'ol'),190,150,14,{sz:9});
     const ex=[]; [['Nameplate',np],['Motor insulation',mir],['Winding resistance',wr],['Rotation',rot],['Starter inspection',st],['Functional test',fn]].forEach(([l,r])=>{ const s=noteOf(l,r); if(s) ex.push(s); });
   }
 
